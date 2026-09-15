@@ -1,9 +1,64 @@
+"""Single-shot classifier: user message -> one of a fixed set of routes.
+
+As of Step 7, AgentOrchestrator (app/agent/orchestrator.py) no longer uses
+this module — it delegates execution to AgentLoop + LLMDecisionMaker
+(app/agent/decision_maker.py) instead. Router is kept in the codebase,
+unmodified and independently tested (tests/test_router.py), rather than
+deleted, because it isn't obviously dead weight — see the relationship below.
+
+Router vs. AgentDecision/LLMDecisionMaker — same underlying question ("what
+should happen with this request?"), answered very differently:
+
+- Router is a closed, one-shot classifier over a fixed `Route` enum (llm /
+  web / time / date), with a cheap deterministic regex fast-path in front of
+  a single LLM call, and no visibility into tool results — it decides once,
+  before anything has run.
+- LLMDecisionMaker produces an open-ended AgentDecision (any registered tool,
+  not a fixed set) and is called *repeatedly* by AgentLoop, each time with
+  the growing execution history (prior tool calls/observations) in its
+  prompt — it can change its mind after seeing what a tool returned, which
+  Router structurally cannot do.
+
+Router is not currently used, but it is NOT obviously redundant: its
+deterministic fast-path is cheap, fast, and has zero LLM-reliability risk
+for the patterns it covers, which the current pure-LLM-decision loop lacks
+entirely (every iteration now costs a real Ollama call, even for something
+as simple as "what time is it?").
+
+UPDATE (Step 8): `decide()` (the full classifier, including its own LLM
+fallback call) is still unused by AgentOrchestrator, and stays that way —
+wiring it in would create a second competing decision-maker, which is
+exactly what Step 8 was told to avoid. Instead, Router's existing
+LLM-free deterministic regex layer (`_deterministic_temporal_check`) is now
+also exposed through `classify_hint()`, a tiny, three-bucket, read-only
+classification with NO LLM call and NO side effects. LLMDecisionMaker
+(app/agent/decision_maker.py) uses it purely as an *advisory* line in its
+own prompt — never as a bypass. LLMDecisionMaker still makes every actual
+decision; the hint can be, and sometimes is, ignored by the model.
+
+UPDATE (Step 8C): `classify_hint()` gained one small, explainable addition —
+a keyword/phrase check for explicit current/recency intent ("latest",
+"recent", "current") or an explicit search/look-up request ("search the
+web", "search for", "look up", "look for"), used only when the existing
+`_deterministic_temporal_check` found no match. This closes a measured gap
+(see the Step 8B baseline): phrases like "What is the latest AI news?" or
+"Search the web for information about RAG." previously fell through to
+GENERAL even though they clearly signal a need for external information.
+`_deterministic_temporal_check` and `decide()` themselves are UNCHANGED —
+only `classify_hint()`'s own web-intent layer is new. This is deliberately
+narrow (no bare "search", so "How does Google Search work?" still reads as
+a static question) rather than a general named-entity or topic classifier —
+see the module-level rationale for why Router still isn't wired into
+AgentOrchestrator even with this addition (this remains a controlled
+experiment, not a decision to keep or remove Router).
+"""
 from __future__ import annotations
 
 import json
 import logging
 import re
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal
 
 from app.config import settings
@@ -12,6 +67,24 @@ from app.models.llm import LLMClient
 logger = logging.getLogger(__name__)
 
 Route = Literal["llm", "web", "time", "date"]
+
+
+class RoutingHint(Enum):
+    """A coarse, advisory-only classification of a user message, produced
+    with zero LLM calls. Deliberately just three buckets — this is NOT a
+    replacement for LLMDecisionMaker's own judgment, only a cheap nudge for
+    the small set of patterns that are genuinely unambiguous.
+
+    - GENERAL: no strong routing signal either way.
+    - TOOL_LIKELY: the request strongly appears to need an external/current-
+      information tool (e.g. a web search), but not deterministically so.
+    - DETERMINISTIC_TOOL: the request unambiguously needs a deterministic
+      tool such as time/date — the strongest of the three signals.
+    """
+
+    GENERAL = "general"
+    TOOL_LIKELY = "tool_likely"
+    DETERMINISTIC_TOOL = "deterministic_tool"
 
 
 @dataclass(frozen=True)
@@ -59,6 +132,50 @@ class Router:
             )
 
         return self._parse_decision(raw_response)
+
+    # Small, explainable web-intent signal (Step 8C) — deliberately NOT a
+    # general topic/entity classifier. Single-word recency signals plus a
+    # handful of explicit search/look-up phrases; "search" alone is excluded
+    # on purpose so a static question like "How does Google Search work?"
+    # doesn't false-positive.
+    _WEB_INTENT_KEYWORDS = ("latest", "recent", "current")
+    _WEB_INTENT_PHRASES = ("search the web", "search for", "look up", "look for")
+
+    def classify_hint(self, user_message: str) -> RoutingHint:
+        """Cheap, deterministic, LLM-free pre-filter producing a coarse,
+        advisory routing hint. Reuses the exact same regex patterns as the
+        deterministic fast-path in `decide()` above — it never calls the LLM
+        fallback and never itself decides anything; it only recognizes the
+        small set of patterns `decide()` already treats as unambiguous, plus
+        one additional LLM-free web-intent check (see `_has_web_intent`).
+        """
+        if user_message is None or not str(user_message).strip():
+            return RoutingHint.GENERAL
+
+        normalized = str(user_message).strip()
+
+        deterministic = self._deterministic_temporal_check(normalized)
+        if deterministic is not None:
+            if deterministic.route in ("time", "date"):
+                return RoutingHint.DETERMINISTIC_TOOL
+            if deterministic.route == "web":
+                return RoutingHint.TOOL_LIKELY
+            return RoutingHint.GENERAL
+
+        if self._has_web_intent(normalized):
+            return RoutingHint.TOOL_LIKELY
+
+        return RoutingHint.GENERAL
+
+    def _has_web_intent(self, user_message: str) -> bool:
+        """True for explicit current/recency wording or an explicit
+        search/look-up request. Only called after the deterministic temporal
+        check already found no match, so it never overrides a time/date
+        classification."""
+        normalized = re.sub(r"\s+", " ", user_message.strip().lower())
+        if any(keyword in normalized for keyword in self._WEB_INTENT_KEYWORDS):
+            return True
+        return any(phrase in normalized for phrase in self._WEB_INTENT_PHRASES)
 
     def _deterministic_temporal_check(self, user_message: str) -> RouterDecision | None:
         normalized = re.sub(r"\s+", " ", user_message.strip().lower())

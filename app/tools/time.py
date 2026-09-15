@@ -8,6 +8,8 @@ from app.tools.base import ToolResult
 class TimeTool:
     name = "time"
     description = "Provides the current local/system date and time from the runtime clock."
+    input_schema: dict[str, str] = {}  # takes no input
+    output_description = "A dict with the current date, time, year, weekday, timezone, and ISO timestamp."
 
     def execute(self, input: str | None = None) -> ToolResult:
         """Return the current local date and time in a predictable structure.

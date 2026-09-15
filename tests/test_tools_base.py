@@ -38,6 +38,9 @@ def test_tool_conforms_to_tool_protocol(tool: Tool) -> None:
     assert isinstance(tool, Tool)
     assert isinstance(tool.name, str) and tool.name
     assert isinstance(tool.description, str) and tool.description
+    assert isinstance(tool.input_schema, dict)
+    for key, value in tool.input_schema.items():
+        assert isinstance(key, str) and isinstance(value, str)
 
 
 # ---------------------------------------------------------------------------

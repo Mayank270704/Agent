@@ -31,21 +31,34 @@ class LLMClient:
         else:
             self.client = None
 
-    def generate(self, messages: list[dict[str, str]]) -> str:
+    def generate(self, messages: list[dict[str, str]], *, json_mode: bool = False) -> str:
+        """Generate a reply. `json_mode` is optional and defaults to False,
+        preserving prior behavior for existing callers (Router, Orchestrator).
+
+        When True, it asks the backend to constrain its output to valid JSON.
+        Currently only wired up for the Ollama provider (via its `format`
+        request field) — the primary configured provider for this project.
+        The OpenAI path is intentionally left untouched for this option, to
+        avoid guessing at Responses-API parameter shapes without the ability
+        to verify them against a real account; callers must still validate
+        JSON output themselves regardless of this flag.
+        """
         if self.provider == "ollama":
-            return self._generate_with_ollama(messages)
+            return self._generate_with_ollama(messages, json_mode=json_mode)
 
         if self.provider == "openai":
             return self._generate_with_openai(messages)
 
         raise ValueError(f"Unsupported LLM provider: {self.provider}")
 
-    def _generate_with_ollama(self, messages: list[dict[str, str]]) -> str:
+    def _generate_with_ollama(self, messages: list[dict[str, str]], *, json_mode: bool = False) -> str:
         payload = {
             "model": self.model_name,
             "messages": messages,
             "stream": False,
         }
+        if json_mode:
+            payload["format"] = "json"
 
         request = urllib.request.Request(
             f"{self.base_url}/api/chat",

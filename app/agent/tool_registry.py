@@ -1,14 +1,21 @@
 """A minimal name -> Tool registry.
 
 This is intentionally small: it only stores and retrieves `Tool` instances by
-name. It has no idea what any tool needs as input, how to build that input,
-or what to do with a tool's result — that knowledge stays with the individual
-tools and the orchestrator (see app/agent/orchestrator.py). The registry's
-only job is `name -> tool` lookup.
+name, and can describe them. It has no idea what any tool needs as input,
+how to build that input, or what to do with a tool's result — that knowledge
+stays with the individual tools and the orchestrator (see
+app/agent/orchestrator.py). It also has no idea what a user *wants* — it
+never classifies a request or picks a tool for one; that stays
+LLMDecisionMaker's job (app/agent/decision_maker.py), advised only by
+Router's deterministic hint (app/agent/router.py). The registry's job is
+`name -> tool` lookup, plus turning registered tools into structured,
+read-only `ToolDescriptor`s (see `describe`/`describe_all` below) — the
+foundation for an agent that can answer "what capabilities are available to
+me?" and describe them consistently, e.g. in an LLM prompt later.
 """
 from __future__ import annotations
 
-from app.tools.base import Tool
+from app.tools.base import Tool, ToolDescriptor
 
 
 class ToolRegistrationError(ValueError):
@@ -48,3 +55,30 @@ class ToolRegistry:
 
     def list_tools(self) -> list[Tool]:
         return list(self._tools.values())
+
+    def describe(self, name: str) -> ToolDescriptor:
+        """Structured metadata for one registered tool. Raises
+        ToolNotFoundError (same as `get`) if `name` isn't registered."""
+        return self._to_descriptor(self.get(name))
+
+    def describe_all(self) -> list[ToolDescriptor]:
+        """Structured metadata for every registered tool — answers "what
+        capabilities are currently available?" without exposing the tool
+        objects themselves. Order matches `list_tools()`."""
+        return [self._to_descriptor(tool) for tool in self.list_tools()]
+
+    @staticmethod
+    def _to_descriptor(tool: Tool) -> ToolDescriptor:
+        # name/description/input_schema are required by the Tool contract, so
+        # they're read directly rather than defaulted — a tool missing one of
+        # these has a real bug worth surfacing, not one worth hiding.
+        return ToolDescriptor(
+            name=tool.name,
+            description=tool.description,
+            input_schema=dict(tool.input_schema),
+            # output_description/permissions are genuinely optional (see
+            # ToolDescriptor's docstring) — most tools today don't define
+            # them, so they're read defensively rather than required.
+            output_description=getattr(tool, "output_description", ""),
+            permissions=tuple(getattr(tool, "permissions", ())),
+        )

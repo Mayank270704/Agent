@@ -12,6 +12,10 @@ chat_service = ChatService()
 
 class ChatRequest(BaseModel):
     message: str
+    # Step 13: optional conversation-scope key, NOT identity/auth (see
+    # app/agent/memory.py). Omitted -> ChatService's single legacy
+    # conversation, exactly like before Step 13.
+    session_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -26,7 +30,11 @@ def read_root() -> dict[str, str]:
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest) -> ChatResponse:
     try:
-        reply = chat_service.ask(request.message)
+        # An explicit-but-blank session_id (e.g. "" or "   ") is rejected by
+        # InMemorySessionMemoryStore itself as a ValueError -> the existing
+        # 400 handler below already covers it; no new validation is added
+        # here (see the Step 13 report on avoiding duplicated validation).
+        reply = chat_service.ask(request.message, session_id=request.session_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:

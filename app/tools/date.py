@@ -9,6 +9,8 @@ from app.tools.base import ToolResult
 class DateTool:
     name = "date"
     description = "Determines the weekday and calendar details for a specified date."
+    input_schema: dict[str, str] = {"date": "string"}
+    output_description = "A dict with the parsed date, weekday, day, month, and year."
 
     _DATE_FORMATS = (
         "%d %B %Y",

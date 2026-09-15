@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 class WebSearchTool:
     name = "web_search"
     description = "Search the web for current information using the Tavily Search API."
+    input_schema: dict[str, str] = {"query": "string"}
+    output_description = "A list of web search results, each with title, url, content, and source metadata."
 
     def __init__(self):
         self.api_key = settings.tavily_api_key
