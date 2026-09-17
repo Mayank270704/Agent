@@ -134,6 +134,11 @@ def test_multiple_tools_execute_in_sequence_before_final() -> None:
 # ---------------------------------------------------------------------------
 
 def test_unregistered_tool_produces_a_failed_result_with_a_graceful_answer() -> None:
+    """Step 17 hardening (F8): the user-facing answer is now a fixed,
+    generic sentence — it must NOT echo internal detail like the invented
+    tool name. That detail is still fully captured in `result.errors`,
+    which is application-internal data, not part of the HTTP response
+    body (see app/main.py)."""
     decision_maker = ScriptedDecisionMaker([AgentDecision.tool("nonexistent_tool", "x")])
     orchestrator = _build_orchestrator(decision_maker, tools=[])
 
@@ -141,7 +146,8 @@ def test_unregistered_tool_produces_a_failed_result_with_a_graceful_answer() -> 
 
     assert result.status is AgentStatus.FAILED
     assert "could not complete this request" in result.answer
-    assert "nonexistent_tool" in result.answer
+    assert "nonexistent_tool" not in result.answer
+    assert "nonexistent_tool" in result.errors[-1].message
     assert result.observations == []
     assert len(result.errors) == 1
 
@@ -151,6 +157,11 @@ def test_unregistered_tool_produces_a_failed_result_with_a_graceful_answer() -> 
 # ---------------------------------------------------------------------------
 
 def test_tool_result_failure_produces_a_failed_result_with_a_graceful_answer() -> None:
+    """Step 17 hardening (F8): a tool's own error text must not reach the
+    user-facing answer either — it is exactly the kind of tool-authored
+    detail (here, network/operational detail; elsewhere a credential
+    config name) this hardening is meant to keep out of an HTTP response.
+    It remains available via `result.errors` for internal diagnostics."""
     tool = FakeTool("web_search", results=[ToolResult.fail("Tavily request failed due to network or timeout")])
     decision_maker = ScriptedDecisionMaker([AgentDecision.tool("web_search", "x")])
     orchestrator = _build_orchestrator(decision_maker, tools=[tool])
@@ -159,7 +170,8 @@ def test_tool_result_failure_produces_a_failed_result_with_a_graceful_answer() -
 
     assert result.status is AgentStatus.FAILED
     assert "could not complete this request" in result.answer
-    assert "Tavily request failed due to network or timeout" in result.answer
+    assert "Tavily request failed due to network or timeout" not in result.answer
+    assert "Tavily request failed due to network or timeout" in result.errors[-1].message
     assert len(result.observations) == 1
     assert result.observations[0].success is False
 
@@ -182,7 +194,10 @@ def test_max_iterations_is_enforced_and_produces_a_failed_result() -> None:
     assert result.status is AgentStatus.FAILED
     assert result.steps == 3
     assert len(tool.calls) == 3
-    assert "iteration" in result.answer.lower()
+    # Step 17 hardening (F8): the generic user-facing answer no longer
+    # embeds this detail; it is still fully captured in result.errors.
+    assert "iteration" not in result.answer.lower()
+    assert "iteration" in result.errors[-1].message.lower()
 
 
 # ---------------------------------------------------------------------------

@@ -167,6 +167,47 @@ class Router:
 
         return RoutingHint.GENERAL
 
+    def deterministic_tool_route(self, user_message: str) -> tuple[str, str | None] | None:
+        """Public, LLM-free accessor over the EXISTING deterministic
+        temporal matcher, narrowed to the cases it already classifies with
+        certainty as a LOCAL time/date tool operation.
+
+        Returns `(tool_name, tool_input)` — either `("time", None)` (the
+        time tool takes no input) or `("date", "<the matched date text>")`
+        — or `None` for everything else.
+
+        This method adds NO new matching of its own: it delegates verbatim
+        to `_deterministic_temporal_check` (unchanged since Step 8) and only
+        translates that existing verdict into the tool-name/tool-input pair
+        a caller would need. In particular it deliberately returns `None`
+        for:
+        - `route="web"` (e.g. "What happened on 12 September 2026?") — a
+          specified date in a question is not the same thing as a local
+          weekday calculation, and which external tool (if any) should
+          answer it is exactly the open-ended judgment that must stay with
+          LLMDecisionMaker.
+        - anything the matcher does not recognize at all, including
+          ambiguous temporal phrasing ("Explain today's date conceptually",
+          "What is the current price of Bitcoin?"). Ambiguity is left to
+          the normal LLM decision path, by design.
+
+        See app/agent/decision_maker.py for the one caller, and why acting
+        on this verdict is opt-in there rather than automatic here — this
+        method decides nothing and has no side effects; it only reports
+        what the existing matcher already knows.
+        """
+        if user_message is None or not str(user_message).strip():
+            return None
+
+        decision = self._deterministic_temporal_check(str(user_message).strip())
+        if decision is None:
+            return None
+        if decision.route == "time":
+            return ("time", None)
+        if decision.route == "date":
+            return ("date", decision.search_query or None)
+        return None
+
     def _has_web_intent(self, user_message: str) -> bool:
         """True for explicit current/recency wording or an explicit
         search/look-up request. Only called after the deterministic temporal

@@ -35,9 +35,11 @@ import json
 import logging
 
 from app.agent.loop import AgentDecision, DecisionMakerError
+from app.agent.reliability import FailureCategory
 from app.agent.memory_formatting import format_memory_context
 from app.agent.router import Router, RoutingHint
 from app.agent.state import AgentState
+from app.agent.telemetry import EventEmitter, EventType, LLMPurpose, elapsed_ms, monotonic_start
 from app.agent.tool_registry import ToolRegistry
 from app.models.llm import LLMClient
 from app.tools.base import ToolDescriptor
@@ -59,7 +61,20 @@ class DecisionParseError(DecisionMakerError):
     "the LLM said something we can't trust or act on." It subclasses
     DecisionMakerError (app/agent/loop.py) so AgentLoop can catch it
     generically, without loop.py needing to know this specific decision
-    maker implementation exists."""
+    maker implementation exists.
+
+    Step 17: every raise site below now passes an explicit `category`
+    (FailureCategory.DECISION_PARSE for a malformed/invalid decision
+    shape, FailureCategory.UNKNOWN_TOOL for an unregistered tool_name) so
+    AgentLoop's injected CorrectionPolicy, if any, can classify the
+    failure without parsing this exception's message text. A category is
+    ALWAYS supplied here deliberately — this class exists specifically to
+    represent the two failure modes Step 17 makes correctable, so leaving
+    it uncategorized here would silently opt every one of THIS class's
+    failures out of correction, which is not the intended default (that
+    default instead comes from `correction_policy=None` on AgentLoop
+    itself — see reliability.py's module docstring).
+    """
 
 
 class LLMDecisionMaker:
@@ -73,18 +88,140 @@ class LLMDecisionMaker:
     this class — only the LLM-free `classify_hint` method is ever called).
     """
 
-    def __init__(self, llm_client: LLMClient, tool_registry: ToolRegistry, router: Router | None = None):
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        tool_registry: ToolRegistry,
+        router: Router | None = None,
+        event_emitter: EventEmitter | None = None,
+        deterministic_temporal_routing: bool = False,
+    ):
         self.llm = llm_client
         self.tools = tool_registry
         self.router = router or Router(llm_client)
+        # Opt-in, default OFF — matching every other capability in this
+        # codebase (correction_policy, tool_execution_gate, event_sink).
+        # OFF means `decide()` below is byte-for-byte what it has always
+        # been: every decision, temporal or not, comes from the LLM.
+        # app/main.py's composition root turns it ON for production; see
+        # `_deterministic_temporal_decision` for exactly what it controls
+        # and, just as importantly, what it does not.
+        self.deterministic_temporal_routing = deterministic_temporal_routing
+        # Milestone 19, opt-in, default None — see app/agent/telemetry.py's
+        # module docstring. With no emitter, `decide()` below is byte-for-
+        # byte identical to before this milestone: no timer starts, no
+        # AgentEvent is built.
+        self.event_emitter = event_emitter
 
     def decide(self, state: AgentState) -> AgentDecision:
+        deterministic = self._deterministic_temporal_decision(state)
+        if deterministic is not None:
+            return deterministic
+
         prompt = self._build_prompt(state)
-        raw_response = self.llm.generate(
-            [{"role": "user", "content": prompt}],
-            json_mode=True,
+
+        if self.event_emitter is None:
+            raw_response = self.llm.generate([{"role": "user", "content": prompt}], json_mode=True)
+            return self._parse_decision(raw_response)
+
+        self.event_emitter.emit(EventType.LLM_CALL_STARTED, step=state.step, llm_purpose=LLMPurpose.DECIDE)
+        start = monotonic_start()
+        try:
+            raw_response = self.llm.generate([{"role": "user", "content": prompt}], json_mode=True)
+        except Exception:
+            # Telemetry never changes what happens here: the SAME
+            # exception, unmodified, still propagates exactly as it always
+            # has (e.g. a RuntimeError from an unreachable Ollama server —
+            # see app/models/llm.py — which this class has never caught).
+            # This is purely an observation of a failure that already
+            # occurred, emitted before re-raising it unchanged.
+            self.event_emitter.emit(
+                EventType.LLM_CALL_FAILED,
+                step=state.step,
+                llm_purpose=LLMPurpose.DECIDE,
+                duration_ms=elapsed_ms(start),
+                success=False,
+            )
+            raise
+        self.event_emitter.emit(
+            EventType.LLM_CALL_COMPLETED,
+            step=state.step,
+            llm_purpose=LLMPurpose.DECIDE,
+            duration_ms=elapsed_ms(start),
+            success=True,
+            output_chars=len(raw_response) if raw_response else 0,
         )
         return self._parse_decision(raw_response)
+
+    # -- Deterministic temporal routing --------------------------------------
+
+    def _deterministic_temporal_decision(self, state: AgentState) -> AgentDecision | None:
+        """Return an `AgentDecision` for the narrow set of requests the
+        application already classifies with certainty as a local time/date
+        operation — or `None` to leave the decision entirely to the LLM,
+        which is what happens for everything else.
+
+        --------------------------------------------------------------------
+        What this controls, and what it deliberately does not
+        --------------------------------------------------------------------
+        It controls exactly two things: WHETHER a request is one of the
+        deterministic temporal cases `Router.deterministic_tool_route`
+        already recognizes, and WHICH of the existing `time`/`date` tools
+        that maps to. Nothing else. It produces an ORDINARY
+        `AgentDecision.tool(...)` — the same value the LLM would have
+        produced — so the resulting action flows through the identical
+        AgentLoop path: `record_tool_call` -> telemetry `tool.proposed` ->
+        `ToolExecutionGate` -> resolve -> authorize -> validate -> confirm
+        -> execute. There is no direct `tool.execute()` here, no registry
+        access beyond a membership check, and no way for this method to
+        reach a tool at all; it only names one.
+
+        --------------------------------------------------------------------
+        Why the LLM cannot override it (and why that is bounded)
+        --------------------------------------------------------------------
+        On the iteration where this fires, the LLM is never consulted, so
+        it structurally cannot redirect a `time`/`date` request to
+        `web_search` — the measured failure this exists to fix (the
+        capability assessment found llama3.2:3b skipping the `time` tool
+        for "What time is it?", with a 76.5% missed-tool-call rate even
+        with the advisory hint active). That authority is deliberately
+        limited to the FIRST attempt: once the tool has been attempted,
+        the third guard below steps aside permanently for this execution.
+
+        --------------------------------------------------------------------
+        The three guards, and why each is required
+        --------------------------------------------------------------------
+        1. `deterministic_temporal_routing` — opt-in; OFF restores the
+           pre-existing behavior exactly.
+        2. `self.tools.has(tool_name)` — a tool the application knows about
+           conceptually may still not be REGISTERED in this deployment.
+           Naming an unregistered tool would manufacture an UNKNOWN_TOOL
+           failure out of nothing, so an unregistered time/date tool falls
+           through to the LLM instead.
+        3. `state.tool_calls` — the tool must not already have been
+           ATTEMPTED during this execution. This is what prevents an
+           infinite deterministic loop (the loop calls `decide()` again
+           after every tool action, and the user's input does not change),
+           and it is also what keeps Milestone 17 intact: after a denial,
+           a validation rejection, or a failed result, the next iteration
+           goes to the normal LLM path carrying the correction feedback —
+           there is no special privileged deterministic retry.
+        """
+        if not self.deterministic_temporal_routing:
+            return None
+
+        selection = self.router.deterministic_tool_route(state.user_input)
+        if selection is None:
+            return None
+
+        tool_name, tool_input = selection
+        if not self.tools.has(tool_name):
+            return None
+        if any(call.tool_name == tool_name for call in state.tool_calls):
+            return None
+
+        logger.info("decision.deterministic_temporal tool=%s", tool_name)
+        return AgentDecision.tool(tool_name, tool_input)
 
     # -- Prompt construction -------------------------------------------------
 
@@ -94,6 +231,7 @@ class LLMDecisionMaker:
         hint_line = self._format_hint(state)
         plan_block = self._format_plan(state)
         memory_block = self._format_memory(state)
+        correction_block = self._format_corrections(state)
 
         return f"""
 You are the decision-making component of an AI agent. You do not execute
@@ -141,7 +279,7 @@ Final answer: {{"action_type": "final", "final_answer": "<your complete answer t
 tool_input is the plain value itself (e.g. the search text, or just the date
 text like "25 December 2026") — never a JSON object echoing the input schema.
 
-{memory_block}EXECUTION HISTORY (JSON — "observations" are real tool-returned evidence):
+{memory_block}{correction_block}EXECUTION HISTORY (JSON — "observations" are real tool-returned evidence):
 {history_block}
 """.strip()
 
@@ -223,6 +361,64 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
             "\n"
         )
 
+    def _format_corrections(self, state: AgentState) -> str:
+        """Optional CORRECTION FEEDBACK section (Step 17). Returns "" when
+        `state.corrections` is empty, so a prompt with no self-correction
+        is byte-identical to before this step — the same opt-in
+        discipline `_format_plan`/`_format_memory` use, and this class's
+        prompt is unaffected for every caller that never injects a
+        CorrectionPolicy into AgentLoop (the default).
+
+        This method does not decide whether a failure is correctable and
+        does not create corrections — it only renders what AgentLoop
+        already recorded (once a CorrectionPolicy returned CORRECT). Every
+        field it reads — `CorrectionNote.category` and `.safe_message` —
+        is already vetted, fixed, application-authored text (see
+        app/agent/reliability.py's module docstring on the closed
+        `_SAFE_MESSAGES` vocabulary). This method never touches raw model
+        output, an exception's raw text, or an invented tool name: none of
+        that is ever stored on a CorrectionNote in the first place, so
+        there is nothing unsafe here for this method to accidentally
+        include.
+
+        `attempt`/`remaining` numbers are deliberately NOT rendered:
+        `remaining` would require this class to know the injected
+        CorrectionPolicy's budget, which it is not wired to and should not
+        need to be (policy configuration is AgentLoop's concern, not the
+        prompt-rendering layer's) — see the Step 17 design's explicit
+        rejection of storing derivable counters as fields. The ordered
+        list of past attempts already tells the model how many times this
+        has happened; an explicit count adds no information a JSON array's
+        own length does not already carry.
+
+        Framing matches `_format_memory`'s pattern: an application-authored
+        header is emitted BEFORE the payload, so instruction authority is
+        established first. Unlike memory, this content did not originate
+        from the user or any external source — it is entirely
+        application-generated — so the framing here is about USAGE
+        ("use this to avoid repeating a mistake"), not about an untrusted-
+        data boundary the way `_format_memory`'s framing is.
+        """
+        if not state.corrections:
+            return ""
+
+        entries = [
+            {"category": note.category.value, "message": note.safe_message} for note in state.corrections
+        ]
+        payload = json.dumps(entries, indent=2, ensure_ascii=True, sort_keys=True)
+
+        return (
+            "HOW TO TREAT CORRECTION FEEDBACK:\n"
+            "- The CORRECTION FEEDBACK block below lists earlier attempts THIS TURN that\n"
+            "  could not be used, and why. It is application-generated guidance, not\n"
+            "  something the user or a tool said.\n"
+            "- Use it to avoid repeating the same mistake. Follow the STRICT JSON contract\n"
+            "  above exactly.\n"
+            "\n"
+            f"CORRECTION FEEDBACK (JSON):\n{payload}\n"
+            "\n"
+        )
+
     def _format_tools(self) -> str:
         """Structured, LLM-facing tool metadata built entirely from
         ToolRegistry.describe_all() — no tool name is ever hardcoded here, so
@@ -270,7 +466,18 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
 
     def _format_history(self, state: AgentState) -> str:
         """Deterministic, bounded JSON serialization of the state relevant to
-        this decision. Never dumps raw Python object reprs."""
+        this decision. Never dumps raw Python object reprs.
+
+        Step 17 hardening (F7): `observation.error` and `error.message` are
+        now passed through `_stringify_and_truncate`, the SAME bound
+        already applied to `observation.data`. Both were previously
+        unbounded — a tool or a decision-maker failure can embed
+        arbitrary-length text (a long stack-trace-shaped string, a huge
+        echoed value), and nothing capped it before it entered this
+        prompt. This closes that gap; it is not new to self-correction,
+        but self-correction is what makes an unbounded, repeatedly-grown
+        history a real, easily reachable cost rather than a one-off.
+        """
         history = {
             "user_input": state.user_input,
             "step": state.step,
@@ -285,12 +492,13 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
                     "tool_name": observation.tool_name,
                     "success": observation.success,
                     "data": self._stringify_and_truncate(observation.data),
-                    "error": observation.error,
+                    "error": self._stringify_and_truncate(observation.error),
                 }
                 for observation in state.observations
             ],
             "errors": [
-                {"step": error.step, "message": error.message} for error in state.errors
+                {"step": error.step, "message": self._stringify_and_truncate(error.message)}
+                for error in state.errors
             ],
         }
         return json.dumps(history, ensure_ascii=True, sort_keys=True, default=str)
@@ -308,15 +516,21 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
     def _parse_decision(self, raw_response: str) -> AgentDecision:
         cleaned = (raw_response or "").strip()
         if not cleaned:
-            raise DecisionParseError("The model returned an empty response.")
+            raise DecisionParseError(
+                "The model returned an empty response.", category=FailureCategory.DECISION_PARSE
+            )
 
         try:
             parsed = json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            raise DecisionParseError(f"Model output was not valid JSON: {exc}") from exc
+            raise DecisionParseError(
+                f"Model output was not valid JSON: {exc}", category=FailureCategory.DECISION_PARSE
+            ) from exc
 
         if not isinstance(parsed, dict):
-            raise DecisionParseError("Model output was not a JSON object.")
+            raise DecisionParseError(
+                "Model output was not a JSON object.", category=FailureCategory.DECISION_PARSE
+            )
 
         action_type = parsed.get("action_type")
         if isinstance(action_type, str):
@@ -326,7 +540,10 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
             # unlike tool_name (an exact registry key, left case-sensitive).
             action_type = action_type.strip().lower()
         if action_type not in ("tool", "final"):
-            raise DecisionParseError(f"Model output had an invalid or missing action_type: {action_type!r}")
+            raise DecisionParseError(
+                f"Model output had an invalid or missing action_type: {action_type!r}",
+                category=FailureCategory.DECISION_PARSE,
+            )
 
         if action_type == "final":
             return self._parse_final_decision(parsed)
@@ -335,23 +552,36 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
     def _parse_final_decision(self, parsed: dict[str, object]) -> AgentDecision:
         final_answer = parsed.get("final_answer")
         if not isinstance(final_answer, str) or not final_answer.strip():
-            raise DecisionParseError("A FINAL decision requires a non-blank final_answer.")
+            raise DecisionParseError(
+                "A FINAL decision requires a non-blank final_answer.", category=FailureCategory.DECISION_PARSE
+            )
 
         try:
             return AgentDecision.final(final_answer)
         except ValueError as exc:  # defense in depth; should be unreachable given the check above
-            raise DecisionParseError(str(exc)) from exc
+            raise DecisionParseError(str(exc), category=FailureCategory.DECISION_PARSE) from exc
 
     def _parse_tool_decision(self, parsed: dict[str, object]) -> AgentDecision:
         tool_name = parsed.get("tool_name")
         if not isinstance(tool_name, str) or not tool_name.strip():
-            raise DecisionParseError("A TOOL decision requires a non-blank tool_name.")
+            raise DecisionParseError(
+                "A TOOL decision requires a non-blank tool_name.", category=FailureCategory.DECISION_PARSE
+            )
         tool_name = tool_name.strip()
 
         if not self.tools.has(tool_name):
             registered = sorted(tool.name for tool in self.tools.list_tools())
+            # Step 17: category UNKNOWN_TOOL. `tool_name` is deliberately
+            # NOT attached to the eventual Failure object AgentLoop builds
+            # from this exception's category (see AgentLoop.run's
+            # DecisionMakerError handling) — it is the model's own
+            # invented, unregistered name, untrusted text with no reason
+            # to be fingerprinted or rendered back (see reliability.py).
+            # It IS included in this exception's own message, exactly as
+            # before, for the TERMINAL case's log/answer text.
             raise DecisionParseError(
-                f"Model requested an unregistered tool {tool_name!r}. Registered tools: {registered}"
+                f"Model requested an unregistered tool {tool_name!r}. Registered tools: {registered}",
+                category=FailureCategory.UNKNOWN_TOOL,
             )
 
         tool_input = parsed.get("tool_input")
@@ -361,10 +591,34 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
             # Treat it the same as an actual null rather than passing the
             # literal text "null" through to the tool as if it were real input.
             tool_input = None
+        if isinstance(tool_input, (dict, list)):
+            # Milestone 21 (Milestone 20 diagnostic finding): llama3.2:3b
+            # occasionally emits a JSON object/array for tool_input instead
+            # of the requested plain string (3/20 cases in the diagnostic —
+            # category F_OTHER, a DECISION_PARSE failure raised before any
+            # AgentDecision existed). Rather than rejecting it outright,
+            # deterministically re-serialize it back to a string.
+            #
+            # This is normalization, not interpretation: `json.dumps` never
+            # executes, evaluates, or acts on the structure — it only
+            # widens what COUNTS AS "a string" for the type check below,
+            # using the same safe, deterministic serialization this class
+            # already applies elsewhere (see `_stringify_and_truncate`).
+            # The resulting text is still just an ordinary `tool_input`
+            # string from every downstream caller's perspective: the
+            # target tool's own `validate()`/`execute()` remains the sole
+            # authority on whether it is USABLE input, and may still raise
+            # `ValueError` (INVALID_TOOL_INPUT) for it, exactly as for any
+            # other malformed string — this change only stops a dict/list
+            # shape from being rejected before a tool ever gets the chance
+            # to judge it.
+            tool_input = json.dumps(tool_input, ensure_ascii=True, sort_keys=True)
         if tool_input is not None and not isinstance(tool_input, str):
-            raise DecisionParseError("tool_input must be a string or null.")
+            raise DecisionParseError(
+                "tool_input must be a string or null.", category=FailureCategory.DECISION_PARSE
+            )
 
         try:
             return AgentDecision.tool(tool_name, tool_input)
         except ValueError as exc:  # defense in depth; should be unreachable given the check above
-            raise DecisionParseError(str(exc)) from exc
+            raise DecisionParseError(str(exc), category=FailureCategory.DECISION_PARSE) from exc

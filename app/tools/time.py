@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.tools.base import ToolResult
+from app.tools.base import RiskLevel, ToolCapability, ToolResult
 
 
 class TimeTool:
@@ -10,6 +10,12 @@ class TimeTool:
     description = "Provides the current local/system date and time from the runtime clock."
     input_schema: dict[str, str] = {}  # takes no input
     output_description = "A dict with the current date, time, year, weekday, timezone, and ISO timestamp."
+    # Milestone 18: pure local computation — reads the runtime clock, makes
+    # no network call, mutates no application or filesystem state. Lowest
+    # available capability/risk tier; never needs confirmation.
+    capability = ToolCapability.READ
+    risk_level = RiskLevel.LOW
+    requires_confirmation = False
 
     def execute(self, input: str | None = None) -> ToolResult:
         """Return the current local date and time in a predictable structure.

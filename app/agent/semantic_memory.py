@@ -52,6 +52,35 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 
+class MemorySessionIsolationError(ValueError):
+    """A memory record was found to belong to a session other than the one
+    being read or written (Step 16G).
+
+    A SUBCLASS of ValueError, deliberately: every existing caller and test
+    that catches ValueError keeps working unchanged, so this is a pure
+    addition rather than a contract change. What it adds is a NAME for the
+    one failure class that must never be degraded into "no memory
+    available".
+
+    Why it needs a name at all: retrieval already raises rather than
+    silently skipping on a session mismatch (16D/16E-A), but until now
+    that raise was indistinguishable from "top_k was a string" or
+    "min_similarity was 1.5". Those are ordinary bugs a future caller may
+    legitimately want to catch and degrade around; a cross-session leak is
+    not. Giving the security case its own type means a future
+    `except ValueError: return None` cannot swallow it by accident — it
+    can be re-raised explicitly — without anything having to parse an
+    error message.
+
+    It is raised in exactly the three places that can observe the
+    disagreement: the retriever (index partition vs stored record),
+    `build_memory_context` (retrieved record vs context session), and
+    `SemanticMemoryWriter.supersede` (target record vs writing session).
+    It is NOT raised for ordinary staleness — a vector pointing at a
+    deleted record is benign divergence and stays a skip-with-warning.
+    """
+
+
 def _require_non_empty_str(field_name: str, value: object) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{field_name} must be a non-empty string.")

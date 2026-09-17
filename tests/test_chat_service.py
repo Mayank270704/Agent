@@ -49,16 +49,31 @@ def test_ask_without_session_id_still_works() -> None:
     assert reply == "Python is a programming language."
 
 
-def test_ask_without_session_id_preserves_the_legacy_single_conversation_across_calls() -> None:
-    chat_service = ChatService(llm_client=FakeLLM([
+def test_ask_without_session_id_does_not_share_conversation_across_calls() -> None:
+    """UPDATED: this test previously asserted the OPPOSITE — that two
+    anonymous calls shared one "legacy single conversation". That shared
+    `_default_memory` was the defect the capability assessment reproduced
+    live (one anonymous request answered with another's content), and it
+    is what the anonymous-memory-isolation change removed. Anonymous
+    requests are now request-scoped, so the second call must NOT see the
+    first call's messages.
+
+    The assertion is on the PROMPT the second call built, not on the
+    scripted reply text: a FakeLLM returns whatever it was scripted to
+    return regardless of context, so only the prompt proves what the
+    model was actually given.
+    """
+    llm = FakeLLM([
         _final_json("Nice to meet you, Alice."),
-        _final_json("Your name is Alice."),
-    ]))
+        _final_json("I do not know your name."),
+    ])
+    chat_service = ChatService(llm_client=llm)
 
     chat_service.ask("My name is Alice")
-    reply = chat_service.ask("What is my name?")
+    chat_service.ask("What is my name?")
 
-    assert reply == "Your name is Alice."
+    second_prompt = llm.calls[-1]["messages"][-1]["content"]
+    assert "Alice" not in second_prompt
 
 
 # ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ me?" and describe them consistently, e.g. in an LLM prompt later.
 """
 from __future__ import annotations
 
-from app.tools.base import Tool, ToolDescriptor
+from app.tools.base import RiskLevel, Tool, ToolCapability, ToolDescriptor
 
 
 class ToolRegistrationError(ValueError):
@@ -81,4 +81,15 @@ class ToolRegistry:
             # them, so they're read defensively rather than required.
             output_description=getattr(tool, "output_description", ""),
             permissions=tuple(getattr(tool, "permissions", ())),
+            # Milestone 18: capability/risk_level/requires_confirmation are
+            # read the identical defensive way, defaulting to
+            # ToolDescriptor's own (least-alarming) defaults for a tool
+            # that declares none of them. This is the ONE place these
+            # three values cross from a `Tool` object into the
+            # authoritative `ToolDescriptor` a PermissionPolicy consults —
+            # they are read from the TOOL, never from a decision, a
+            # prompt, or any model output.
+            capability=getattr(tool, "capability", ToolCapability.READ),
+            risk_level=getattr(tool, "risk_level", RiskLevel.LOW),
+            requires_confirmation=getattr(tool, "requires_confirmation", False),
         )

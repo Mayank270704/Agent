@@ -31,7 +31,58 @@ use remains entirely LLMDecisionMaker's job.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Protocol, runtime_checkable
+
+
+class ToolCapability(Enum):
+    """Application-authored classification of WHAT KIND of effect a tool
+    has (Milestone 18). This is TOOL metadata, not a permission decision —
+    it lives here, next to `Tool`/`ToolDescriptor`, rather than in the
+    agent-level permission module (app/agent/permissions.py), because a
+    tool's capability is a property of the tool itself, independent of
+    whether any authorization system exists to consult it. The dependency
+    points the natural way: app/agent/permissions.py imports THIS enum
+    from here, this module imports nothing from app/agent/.
+
+    Deliberately a flat, closed set of four members rather than a set of
+    independent flags: every tool in this codebase has exactly one
+    PRIMARY characteristic that matters for authorization purposes.
+    READ/WRITE/DESTRUCTIVE describe effect on APPLICATION-OWNED state;
+    EXTERNAL_NETWORK is orthogonal to that axis and is used instead of
+    READ/WRITE for a tool whose defining risk is reaching a third-party
+    service (untrusted response content, data leaving the process,
+    network failure modes) rather than mutating local state. A tool that
+    both calls out AND writes would need a richer model than this
+    prototype requires; none of the three tools that exist today do.
+
+    NEVER supplied by an LLM. A tool declares its own capability as a
+    plain class attribute (see TimeTool/DateTool/WebSearchTool), which the
+    model has no reference to and cannot alter at runtime — the same
+    guarantee that already protects `Tool.name`/`description`.
+    """
+
+    READ = "read"
+    WRITE = "write"
+    DESTRUCTIVE = "destructive"
+    EXTERNAL_NETWORK = "external_network"
+
+
+class RiskLevel(Enum):
+    """Application-authored risk tier (Milestone 18), independent of
+    `ToolCapability`. Kept as its own field rather than derived from
+    capability because the two questions are genuinely different ("what
+    kind of effect" vs. "how much does a mistake cost here") and the
+    Milestone 18 test suite exercises a model-supplied `risk_level` claim
+    being ignored specifically, so the descriptor needs a real field for
+    that claim to be checked against.
+
+    NEVER supplied by an LLM, for the identical reason as `ToolCapability`.
+    """
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
 
 
 @dataclass(frozen=True)
@@ -104,6 +155,28 @@ class ToolDescriptor:
     system in this codebase yet) and it isn't invented here; a tool that
     doesn't define `output_description`/`permissions` simply gets the
     defaults below (see ToolRegistry._to_descriptor for how these are read).
+
+    `capability`, `risk_level`, and `requires_confirmation` (Milestone 18)
+    follow the identical optional-metadata pattern: read defensively from
+    the tool object by `ToolRegistry._to_descriptor`, defaulting to the
+    same values declared here when a tool does not define them. These
+    three are what app/agent/permissions.py's `PermissionPolicy` consults
+    to make an authorization decision — they are APPLICATION-OWNED (set by
+    whoever writes the tool, in Python source the LLM cannot reach or
+    edit) and are never read from, or overridable by, model output. See
+    app/agent/tool_execution.py's `ToolExecutionGate` for where that
+    boundary is enforced.
+
+    Defaults are deliberately the LEAST ALARMING values (READ / LOW /
+    no confirmation needed) rather than the most conservative, because
+    these three fields are DESCRIPTIVE metadata, not the actual
+    authorization gate — that gate is `PermissionPolicy`'s explicit
+    allow-list (Milestone 18 design), which denies any tool not
+    explicitly named regardless of what capability/risk defaults would
+    otherwise suggest. A silently-defaulted READ/LOW tool that is not on
+    the allow-list is still denied; these defaults exist so a tool that
+    genuinely has no reason to declare them (a future read-only utility,
+    a test fake) does not have to.
     """
 
     name: str
@@ -111,3 +184,6 @@ class ToolDescriptor:
     input_schema: dict[str, str] = field(default_factory=dict)
     output_description: str = ""
     permissions: tuple[str, ...] = ()
+    capability: ToolCapability = ToolCapability.READ
+    risk_level: RiskLevel = RiskLevel.LOW
+    requires_confirmation: bool = False

@@ -1,0 +1,534 @@
+{"text": "What day of the week is 1 May 2026?", "label": "DATE"}
+{"text": "Explain what autonomous vehicles is, then give me today's news about it.", "label": "WEB"}
+{"text": "Define a database index.", "label": "DIRECT"}
+{"text": "any recent news on the iPhone?", "label": "WEB"}
+{"text": "search the web for the housing market", "label": "WEB"}
+{"text": "Give me a simple explanation of compound interest.", "label": "DIRECT"}
+{"text": "Has Samsung released anything new recently?", "label": "WEB"}
+{"text": "Yo what time is it rn?", "label": "TIME"}
+{"text": "What is the square root of 100?", "label": "DIRECT"}
+{"text": "What is 100 + 37?", "label": "DIRECT"}
+{"text": "What is the square root of 9?", "label": "DIRECT"}
+{"text": "What is Intel working on currently?", "label": "WEB"}
+{"text": "Give me a simple explanation of inheritance in programming.", "label": "DIRECT"}
+{"text": "search the web for renewable energy", "label": "WEB"}
+{"text": "What are people saying about Apple today?", "label": "WEB"}
+{"text": "time please", "label": "TIME"}
+{"text": "I'm confused about a black hole, can you clarify?", "label": "DIRECT"}
+{"text": "What is a current in physics?", "label": "DIRECT"}
+{"text": "Explain supply and demand.", "label": "DIRECT"}
+{"text": "If I have 7 apples and give away 6, how many remain?", "label": "DIRECT"}
+{"text": "Explain a neural network.", "label": "DIRECT"}
+{"text": "What is a neural network?", "label": "DIRECT"}
+{"text": "What is 7 + 6?", "label": "DIRECT"}
+{"text": "What is autonomous vehicles, and what are the latest breakthroughs in it?", "label": "WEB"}
+{"text": "Look up current information about Apple.", "label": "WEB"}
+{"text": "What is currently happening in the stock market?", "label": "WEB"}
+{"text": "What is 64 minus 1?", "label": "DIRECT"}
+{"text": "What's the current time?", "label": "TIME"}
+{"text": "What are the latest developments in climate change?", "label": "WEB"}
+{"text": "Find online what's new with the stock market.", "label": "WEB"}
+{"text": "Give me today's news about the NBA.", "label": "WEB"}
+{"text": "Can you explain a hash table to me?", "label": "DIRECT"}
+{"text": "Give me a simple explanation of object-oriented programming.", "label": "DIRECT"}
+{"text": "What is the square root of 50?", "label": "DIRECT"}
+{"text": "Has Google released anything new recently?", "label": "WEB"}
+{"text": "What's the date today?", "label": "DATE"}
+{"text": "How does recursion work?", "label": "DIRECT"}
+{"text": "Search for the latest the stock market news.", "label": "WEB"}
+{"text": "Find current information about gene editing.", "label": "WEB"}
+{"text": "What is inheritance in programming?", "label": "DIRECT"}
+{"text": "What weekday is 31 October 2026?", "label": "DATE"}
+{"text": "Do you know the exact time at the moment?", "label": "TIME"}
+{"text": "Could you tell me what time it is right now?", "label": "TIME"}
+{"text": "What are people saying about renewable energy today?", "label": "WEB"}
+{"text": "What is 45 + 22?", "label": "DIRECT"}
+{"text": "What is the square root of 25?", "label": "DIRECT"}
+{"text": "Has Meta released anything new recently?", "label": "WEB"}
+{"text": "What does the central limit theorem mean?", "label": "DIRECT"}
+{"text": "What weekday is 1 January 2027?", "label": "DATE"}
+{"text": "What's the time?", "label": "TIME"}
+{"text": "What is 50 minus 9?", "label": "DIRECT"}
+{"text": "What day was 4 July 2025?", "label": "DATE"}
+{"text": "What is 100 times 37?", "label": "DIRECT"}
+{"text": "What day is today?", "label": "DATE"}
+{"text": "What is the latest version of Docker?", "label": "WEB"}
+{"text": "How does a linked list work?", "label": "DIRECT"}
+{"text": "What day of the week is it today?", "label": "DATE"}
+{"text": "I need to know the time?", "label": "TIME"}
+{"text": "What is the current ratio in accounting?", "label": "DIRECT"}
+{"text": "I'm confused about inheritance in programming, can you clarify?", "label": "DIRECT"}
+{"text": "Who is the current CEO of Amazon?", "label": "WEB"}
+{"text": "What is machine learning?", "label": "DIRECT"}
+{"text": "today's date?", "label": "DATE"}
+{"text": "What day is it?", "label": "DATE"}
+{"text": "What is the latest news about Microsoft?", "label": "WEB"}
+{"text": "What is Big O time complexity?", "label": "DIRECT"}
+{"text": "What does DNA replication mean?", "label": "DIRECT"}
+{"text": "What is 100 minus 37?", "label": "DIRECT"}
+{"text": "search the web for AI", "label": "WEB"}
+{"text": "What is currently happening in Nvidia?", "label": "WEB"}
+{"text": "What does an algorithm mean?", "label": "DIRECT"}
+{"text": "Has Intel released anything new recently?", "label": "WEB"}
+{"text": "What is the current state of the housing market?", "label": "WEB"}
+{"text": "any recent news on the stock market?", "label": "WEB"}
+{"text": "Define Newton's laws of motion.", "label": "DIRECT"}
+{"text": "Which day of the week was 14 February 2027?", "label": "DATE"}
+{"text": "Search for the latest Bitcoin news.", "label": "WEB"}
+{"text": "What weekday is 25 December 2026?", "label": "DATE"}
+{"text": "What does reinforcement learning mean?", "label": "DIRECT"}
+{"text": "May I know the current time?", "label": "TIME"}
+{"text": "Find current information about the stock market.", "label": "WEB"}
+{"text": "What day of the week is 23 June 2027?", "label": "DATE"}
+{"text": "Can you look up the latest the NBA updates?", "label": "WEB"}
+{"text": "What day of the week is 9 November 2025?", "label": "DATE"}
+{"text": "Look up current information about the World Cup.", "label": "WEB"}
+{"text": "Explain an algorithm.", "label": "DIRECT"}
+{"text": "Write a haiku about autumn.", "label": "DIRECT"}
+{"text": "What is a linked list?", "label": "DIRECT"}
+{"text": "I'm confused about gradient descent, can you clarify?", "label": "DIRECT"}
+{"text": "Look up current information about climate change.", "label": "WEB"}
+{"text": "What is 50 + 9?", "label": "DIRECT"}
+{"text": "What is Google working on currently?", "label": "WEB"}
+{"text": "Explain what a fiscal year is.", "label": "DIRECT"}
+{"text": "What does a linked list mean?", "label": "DIRECT"}
+{"text": "What is the current state of cryptocurrency regulation?", "label": "WEB"}
+{"text": "Can you look up the latest the World Cup updates?", "label": "WEB"}
+{"text": "Give me today's news about self-driving cars.", "label": "WEB"}
+{"text": "Convert 13 kilometers to miles.", "label": "DIRECT"}
+{"text": "Find online what's new with remote work trends.", "label": "WEB"}
+{"text": "How does compound interest work?", "label": "DIRECT"}
+{"text": "Has Adobe released anything new recently?", "label": "WEB"}
+{"text": "Can you help me write a poem about the ocean?", "label": "DIRECT"}
+{"text": "Find online what's new with Apple.", "label": "WEB"}
+{"text": "whats the latest on the World Cup", "label": "WEB"}
+{"text": "What is the current state of remote work trends?", "label": "WEB"}
+{"text": "What are the recent developments in cybersecurity?", "label": "WEB"}
+{"text": "What are people saying about Nvidia today?", "label": "WEB"}
+{"text": "Can you explain the stock market as a concept to me?", "label": "DIRECT"}
+{"text": "Do you have the time?", "label": "TIME"}
+{"text": "What is the current state of electric vehicles?", "label": "WEB"}
+{"text": "What does 'current' mean in electrical engineering?", "label": "DIRECT"}
+{"text": "What is 13 + 13?", "label": "DIRECT"}
+{"text": "What is 50 times 9?", "label": "DIRECT"}
+{"text": "Can you explain gradient descent to me?", "label": "DIRECT"}
+{"text": "What time complexity does quicksort have?", "label": "DIRECT"}
+{"text": "Which day of the week was 4 July 2025?", "label": "DATE"}
+{"text": "Find online what's new with renewable energy.", "label": "WEB"}
+{"text": "Give me a workout routine for beginners.", "label": "DIRECT"}
+{"text": "What is Adobe working on currently?", "label": "WEB"}
+{"text": "What does the Pythagorean theorem mean?", "label": "DIRECT"}
+{"text": "Explain what large language models is, then give me today's news about it.", "label": "WEB"}
+{"text": "What day was 1 May 2026?", "label": "DATE"}
+{"text": "Which day of the week was 15 August 2026?", "label": "DATE"}
+{"text": "Define TCP/IP.", "label": "DIRECT"}
+{"text": "Can you explain the central limit theorem to me?", "label": "DIRECT"}
+{"text": "Can you describe fusion energy and also find the latest research on it?", "label": "WEB"}
+{"text": "Find online what's new with chip manufacturing.", "label": "WEB"}
+{"text": "Define blockchain technology.", "label": "DIRECT"}
+{"text": "Explain reinforcement learning.", "label": "DIRECT"}
+{"text": "How does a neural network work?", "label": "DIRECT"}
+{"text": "If I have 50 apples and give away 9, how many remain?", "label": "DIRECT"}
+{"text": "What is 81 minus 1?", "label": "DIRECT"}
+{"text": "What does blockchain technology mean?", "label": "DIRECT"}
+{"text": "Explain fusion energy and then tell me about recent developments in fusion energy.", "label": "WEB"}
+{"text": "If I have 13 apples and give away 13, how many remain?", "label": "DIRECT"}
+{"text": "What is the current price of Apple?", "label": "WEB"}
+{"text": "Explain a transformer in deep learning.", "label": "DIRECT"}
+{"text": "Who is the current CEO of IBM?", "label": "WEB"}
+{"text": "What day of the week is 11 September 2025?", "label": "DATE"}
+{"text": "Give me a simple explanation of an algorithm.", "label": "DIRECT"}
+{"text": "What is gradient descent?", "label": "DIRECT"}
+{"text": "How do ocean currents work?", "label": "DIRECT"}
+{"text": "Has Netflix released anything new recently?", "label": "WEB"}
+{"text": "What's new with the housing market this week?", "label": "WEB"}
+{"text": "I'd like to know what time it is?", "label": "TIME"}
+{"text": "Time check, please?", "label": "TIME"}
+{"text": "What is the square root of 64?", "label": "DIRECT"}
+{"text": "Can you look up the latest Apple updates?", "label": "WEB"}
+{"text": "If I have 81 apples and give away 1, how many remain?", "label": "DIRECT"}
+{"text": "What is DNA replication?", "label": "DIRECT"}
+{"text": "Give me a simple explanation of the stock market as a concept.", "label": "DIRECT"}
+{"text": "Hey what time is it?", "label": "TIME"}
+{"text": "How does big-O notation work?", "label": "DIRECT"}
+{"text": "Whats the time?", "label": "TIME"}
+{"text": "How does a transformer in deep learning work?", "label": "DIRECT"}
+{"text": "Give me today's news about Tesla.", "label": "WEB"}
+{"text": "Can you explain TCP/IP to me?", "label": "DIRECT"}
+{"text": "How should I structure a cover letter?", "label": "DIRECT"}
+{"text": "Who is the current CEO of Netflix?", "label": "WEB"}
+{"text": "whats the date", "label": "DATE"}
+{"text": "Define reinforcement learning.", "label": "DIRECT"}
+{"text": "Explain blockchain technology.", "label": "DIRECT"}
+{"text": "What does how compilers work mean?", "label": "DIRECT"}
+{"text": "How does Newton's laws of motion work?", "label": "DIRECT"}
+{"text": "yo what time is it rn", "label": "TIME"}
+{"text": "Find online what's new with artificial general intelligence.", "label": "WEB"}
+{"text": "Tell me what time it is.", "label": "TIME"}
+{"text": "Give me today's news about climate change.", "label": "WEB"}
+{"text": "What is 9 + 4?", "label": "DIRECT"}
+{"text": "Give me a simple explanation of how compilers work.", "label": "DIRECT"}
+{"text": "I'm confused about reinforcement learning, can you clarify?", "label": "DIRECT"}
+{"text": "what's the time", "label": "TIME"}
+{"text": "Explain gradient descent.", "label": "DIRECT"}
+{"text": "can u tell me the time", "label": "TIME"}
+{"text": "What is the square root of 7?", "label": "DIRECT"}
+{"text": "Define polymorphism.", "label": "DIRECT"}
+{"text": "Can you find the most recent information on inflation?", "label": "WEB"}
+{"text": "Give me the current time?", "label": "TIME"}
+{"text": "How does natural selection work?", "label": "DIRECT"}
+{"text": "Do you know what time it is?", "label": "TIME"}
+{"text": "What are the latest developments in chip manufacturing?", "label": "WEB"}
+{"text": "Explain a linked list.", "label": "DIRECT"}
+{"text": "Whats the date?", "label": "DATE"}
+{"text": "Give me a simple explanation of blockchain technology.", "label": "DIRECT"}
+{"text": "What day was 31 October 2026?", "label": "DATE"}
+{"text": "What is the central limit theorem?", "label": "DIRECT"}
+{"text": "How does reinforcement learning work?", "label": "DIRECT"}
+{"text": "Can you tell me today's date?", "label": "DATE"}
+{"text": "What are the recent developments in remote work trends?", "label": "WEB"}
+{"text": "What is the latest version of Windows?", "label": "WEB"}
+{"text": "Write a short story about a robot.", "label": "DIRECT"}
+{"text": "I'm confused about TCP/IP, can you clarify?", "label": "DIRECT"}
+{"text": "What is happening with Nvidia right now?", "label": "WEB"}
+{"text": "What weekday is 14 February 2027?", "label": "DATE"}
+{"text": "What does TCP/IP mean?", "label": "DIRECT"}
+{"text": "What is 25 times 17?", "label": "DIRECT"}
+{"text": "What is the square root of 45?", "label": "DIRECT"}
+{"text": "How do I improve my writing skills?", "label": "DIRECT"}
+{"text": "What is the latest news about remote work trends?", "label": "WEB"}
+{"text": "search the web for gene editing", "label": "WEB"}
+{"text": "What time do you have?", "label": "TIME"}
+{"text": "Convert 50 kilometers to miles.", "label": "DIRECT"}
+{"text": "I'm confused about the greenhouse effect, can you clarify?", "label": "DIRECT"}
+{"text": "Hello, how are you?", "label": "DIRECT"}
+{"text": "What's a fun fact about octopuses?", "label": "DIRECT"}
+{"text": "I'm confused about a transformer in deep learning, can you clarify?", "label": "DIRECT"}
+{"text": "What is large language models, and what are the latest breakthroughs in it?", "label": "WEB"}
+{"text": "I'm confused about a database index, can you clarify?", "label": "DIRECT"}
+{"text": "What are people saying about climate change today?", "label": "WEB"}
+{"text": "Which day of the week was 1 May 2026?", "label": "DATE"}
+{"text": "What are some good books to read?", "label": "DIRECT"}
+{"text": "give me the current time", "label": "TIME"}
+{"text": "Explain recursion.", "label": "DIRECT"}
+{"text": "Can you describe reinforcement learning and also find the latest research on it?", "label": "WEB"}
+{"text": "Who is the current CEO of Adobe?", "label": "WEB"}
+{"text": "do you know what time it is", "label": "TIME"}
+{"text": "What is happening with cryptocurrency regulation right now?", "label": "WEB"}
+{"text": "Can you find the most recent information on vaccine research?", "label": "WEB"}
+{"text": "What day of the week is 15 August 2026?", "label": "DATE"}
+{"text": "If I have 25 apples and give away 17, how many remain?", "label": "DIRECT"}
+{"text": "search the web for the iPhone", "label": "WEB"}
+{"text": "Explain a black hole.", "label": "DIRECT"}
+{"text": "I'm confused about big-O notation, can you clarify?", "label": "DIRECT"}
+{"text": "Tell me a joke.", "label": "DIRECT"}
+{"text": "What is how compilers work?", "label": "DIRECT"}
+{"text": "What is Daylight Saving Time?", "label": "DIRECT"}
+{"text": "What does the stock market as a concept mean?", "label": "DIRECT"}
+{"text": "What is a transformer in deep learning?", "label": "DIRECT"}
+{"text": "What is the latest version of React?", "label": "WEB"}
+{"text": "Explain what gene therapy is, then give me today's news about it.", "label": "WEB"}
+{"text": "What is happening with the iPhone right now?", "label": "WEB"}
+{"text": "What is 13 times 13?", "label": "DIRECT"}
+{"text": "Convert 25 kilometers to miles.", "label": "DIRECT"}
+{"text": "What is a hash table?", "label": "DIRECT"}
+{"text": "Can you explain supply and demand to me?", "label": "DIRECT"}
+{"text": "Explain the concept of electrical current.", "label": "DIRECT"}
+{"text": "What day was 14 February 2027?", "label": "DATE"}
+{"text": "I'm confused about how compilers work, can you clarify?", "label": "DIRECT"}
+{"text": "whats the latest on AI", "label": "WEB"}
+{"text": "What is Meta working on currently?", "label": "WEB"}
+{"text": "What is 9 minus 4?", "label": "DIRECT"}
+{"text": "What is the latest news about self-driving cars?", "label": "WEB"}
+{"text": "What is the greenhouse effect?", "label": "DIRECT"}
+{"text": "Search the web for self-driving cars.", "label": "WEB"}
+{"text": "I need to know the time.", "label": "TIME"}
+{"text": "How do I make my code more readable?", "label": "DIRECT"}
+{"text": "whats the latest on gene editing", "label": "WEB"}
+{"text": "Tell me the current time please?", "label": "TIME"}
+{"text": "What are the recent developments in 5G networks?", "label": "WEB"}
+{"text": "Explain reinforcement learning and then tell me about recent developments in reinforcement learning.", "label": "WEB"}
+{"text": "What day of the week is 25 December 2026?", "label": "DATE"}
+{"text": "What is 81 times 1?", "label": "DIRECT"}
+{"text": "What is the local time right now?", "label": "TIME"}
+{"text": "What day of the week is 14 February 2027?", "label": "DATE"}
+{"text": "What is Newton's laws of motion?", "label": "DIRECT"}
+{"text": "How does REST APIs work?", "label": "DIRECT"}
+{"text": "Explain the water cycle.", "label": "DIRECT"}
+{"text": "What are people saying about the housing market today?", "label": "WEB"}
+{"text": "Define object-oriented programming.", "label": "DIRECT"}
+{"text": "What is the latest version of TensorFlow?", "label": "WEB"}
+{"text": "quick, what time is it", "label": "TIME"}
+{"text": "How does gradient descent work?", "label": "DIRECT"}
+{"text": "How does DNA replication work?", "label": "DIRECT"}
+{"text": "Time check, please.", "label": "TIME"}
+{"text": "Quick, what time is it?", "label": "TIME"}
+{"text": "What weekday is 11 September 2025?", "label": "DATE"}
+{"text": "Convert 81 kilometers to miles.", "label": "DIRECT"}
+{"text": "What is natural selection?", "label": "DIRECT"}
+{"text": "What weekday is 4 July 2025?", "label": "DATE"}
+{"text": "What are the recent developments in renewable energy?", "label": "WEB"}
+{"text": "What is the square root of 81?", "label": "DIRECT"}
+{"text": "What is object-oriented programming?", "label": "DIRECT"}
+{"text": "Look up current information about vaccine research.", "label": "WEB"}
+{"text": "Give me today's news about electric vehicles.", "label": "WEB"}
+{"text": "Search the web for electric vehicles.", "label": "WEB"}
+{"text": "What is Samsung working on currently?", "label": "WEB"}
+{"text": "Explain gene therapy and then tell me about recent developments in gene therapy.", "label": "WEB"}
+{"text": "What are people saying about 5G networks today?", "label": "WEB"}
+{"text": "What does a database index mean?", "label": "DIRECT"}
+{"text": "whats the time", "label": "TIME"}
+{"text": "Explain what fusion energy is, then give me today's news about it.", "label": "WEB"}
+{"text": "I'm confused about Newton's laws of motion, can you clarify?", "label": "DIRECT"}
+{"text": "What is happening with AI right now?", "label": "WEB"}
+{"text": "What are the recent developments in chip manufacturing?", "label": "WEB"}
+{"text": "Define the water cycle.", "label": "DIRECT"}
+{"text": "What is the latest news about Apple?", "label": "WEB"}
+{"text": "What is currently happening in the iPhone?", "label": "WEB"}
+{"text": "How does how compilers work work?", "label": "DIRECT"}
+{"text": "How does supply and demand work?", "label": "DIRECT"}
+{"text": "Which day of the week was 11 September 2025?", "label": "DATE"}
+{"text": "What is 7 times 6?", "label": "DIRECT"}
+{"text": "Define quantum entanglement.", "label": "DIRECT"}
+{"text": "What is 9 times 4?", "label": "DIRECT"}
+{"text": "Find current information about Nvidia.", "label": "WEB"}
+{"text": "any recent news on the housing market?", "label": "WEB"}
+{"text": "Explain object-oriented programming.", "label": "DIRECT"}
+{"text": "What is the current price of Amazon?", "label": "WEB"}
+{"text": "Can you explain recursion to me?", "label": "DIRECT"}
+{"text": "What is the latest version of macOS?", "label": "WEB"}
+{"text": "Can you help me draft a polite email declining a meeting?", "label": "DIRECT"}
+{"text": "What time is it?", "label": "TIME"}
+{"text": "What weekday is 1 May 2026?", "label": "DATE"}
+{"text": "Can you find the most recent information on Nvidia?", "label": "WEB"}
+{"text": "Which day of the week was 25 December 2026?", "label": "DATE"}
+{"text": "What is the latest version of Android?", "label": "WEB"}
+{"text": "What day was 11 September 2025?", "label": "DATE"}
+{"text": "What does big-O notation mean?", "label": "DIRECT"}
+{"text": "What time is it now?", "label": "TIME"}
+{"text": "Define recursion.", "label": "DIRECT"}
+{"text": "Give me a simple explanation of a neural network.", "label": "DIRECT"}
+{"text": "Give me a simple explanation of gradient descent.", "label": "DIRECT"}
+{"text": "whats the latest on inflation", "label": "WEB"}
+{"text": "Define DNA replication.", "label": "DIRECT"}
+{"text": "Can you explain inheritance in programming to me?", "label": "DIRECT"}
+{"text": "What does Newton's laws of motion mean?", "label": "DIRECT"}
+{"text": "Can you look up the latest climate change updates?", "label": "WEB"}
+{"text": "What is reinforcement learning, and what are the latest breakthroughs in it?", "label": "WEB"}
+{"text": "What is 13 minus 13?", "label": "DIRECT"}
+{"text": "I'm confused about the water cycle, can you clarify?", "label": "DIRECT"}
+{"text": "any recent news on the World Cup?", "label": "WEB"}
+{"text": "What's the current local time?", "label": "TIME"}
+{"text": "What are some tips for public speaking?", "label": "DIRECT"}
+{"text": "Give me a simple explanation of natural selection.", "label": "DIRECT"}
+{"text": "Explain autonomous vehicles and then tell me about recent developments in autonomous vehicles.", "label": "WEB"}
+{"text": "What is the latest version of Java?", "label": "WEB"}
+{"text": "Tell me about recent developments in Apple.", "label": "WEB"}
+{"text": "Tell me what time it is?", "label": "TIME"}
+{"text": "How is UTC time calculated?", "label": "DIRECT"}
+{"text": "What does natural selection mean?", "label": "DIRECT"}
+{"text": "What is 12 times 8?", "label": "DIRECT"}
+{"text": "What is 25 + 17?", "label": "DIRECT"}
+{"text": "What is the history of the Gregorian calendar?", "label": "DIRECT"}
+{"text": "What is the time right now?", "label": "TIME"}
+{"text": "Tell me about recent developments in Tesla.", "label": "WEB"}
+{"text": "What is 64 times 1?", "label": "DIRECT"}
+{"text": "What is 64 + 1?", "label": "DIRECT"}
+{"text": "What is the current state of AI?", "label": "WEB"}
+{"text": "Explain what reinforcement learning is, then give me today's news about it.", "label": "WEB"}
+{"text": "Search the web for the semiconductor industry.", "label": "WEB"}
+{"text": "What is photosynthesis?", "label": "DIRECT"}
+{"text": "Explain TCP/IP.", "label": "DIRECT"}
+{"text": "Explain DNA replication.", "label": "DIRECT"}
+{"text": "What is currently happening in Microsoft?", "label": "WEB"}
+{"text": "What day of the week is 1 January 2027?", "label": "DATE"}
+{"text": "Can you explain big-O notation to me?", "label": "DIRECT"}
+{"text": "whats the latest on the housing market", "label": "WEB"}
+{"text": "What is an algorithm?", "label": "DIRECT"}
+{"text": "What is the current tense in grammar?", "label": "DIRECT"}
+{"text": "What's new with self-driving cars this week?", "label": "WEB"}
+{"text": "What is a leap second?", "label": "DIRECT"}
+{"text": "What are the latest developments in remote work trends?", "label": "WEB"}
+{"text": "I need the current time, please?", "label": "TIME"}
+{"text": "Just checking, what time is it?", "label": "TIME"}
+{"text": "what time is it", "label": "TIME"}
+{"text": "Can you explain a transformer in deep learning to me?", "label": "DIRECT"}
+{"text": "Who is the current CEO of Intel?", "label": "WEB"}
+{"text": "I need the current time, please.", "label": "TIME"}
+{"text": "Define the central limit theorem.", "label": "DIRECT"}
+{"text": "What is the current price of Gold?", "label": "WEB"}
+{"text": "What does polymorphism mean?", "label": "DIRECT"}
+{"text": "What is the latest version of PyTorch?", "label": "WEB"}
+{"text": "What is compound interest?", "label": "DIRECT"}
+{"text": "Explain large language models and then tell me about recent developments in large language models.", "label": "WEB"}
+{"text": "What is 25 minus 17?", "label": "DIRECT"}
+{"text": "What day was 23 June 2027?", "label": "DATE"}
+{"text": "What are the latest developments in Tesla?", "label": "WEB"}
+{"text": "search the web for artificial general intelligence", "label": "WEB"}
+{"text": "How does polymorphism work?", "label": "DIRECT"}
+{"text": "What day was 15 August 2026?", "label": "DATE"}
+{"text": "I'm confused about a linked list, can you clarify?", "label": "DIRECT"}
+{"text": "Can you explain the greenhouse effect to me?", "label": "DIRECT"}
+{"text": "Please tell me the current local time?", "label": "TIME"}
+{"text": "Tell me about recent developments in Bitcoin.", "label": "WEB"}
+{"text": "If I have 9 apples and give away 4, how many remain?", "label": "DIRECT"}
+{"text": "Define big-O notation.", "label": "DIRECT"}
+{"text": "Can you explain polymorphism to me?", "label": "DIRECT"}
+{"text": "Which day of the week was 23 June 2027?", "label": "DATE"}
+{"text": "Who is the current CEO of Meta?", "label": "WEB"}
+{"text": "Can you look up the latest the semiconductor industry updates?", "label": "WEB"}
+{"text": "I'm confused about recursion, can you clarify?", "label": "DIRECT"}
+{"text": "Can you find the most recent information on climate change?", "label": "WEB"}
+{"text": "Define a linked list.", "label": "DIRECT"}
+{"text": "What's the exact time right now?", "label": "TIME"}
+{"text": "What does REST APIs mean?", "label": "DIRECT"}
+{"text": "Find online what's new with gene editing.", "label": "WEB"}
+{"text": "What are the latest developments in electric vehicles?", "label": "WEB"}
+{"text": "What is 45 times 22?", "label": "DIRECT"}
+{"text": "Find current information about space exploration.", "label": "WEB"}
+{"text": "Find current information about the iPhone.", "label": "WEB"}
+{"text": "any recent news on AI?", "label": "WEB"}
+{"text": "Can you explain a black hole to me?", "label": "DIRECT"}
+{"text": "What is today's date?", "label": "DATE"}
+{"text": "What's a good recipe for pasta?", "label": "DIRECT"}
+{"text": "What weekday is 9 November 2025?", "label": "DATE"}
+{"text": "What is the most recent common ancestor in genetics?", "label": "DIRECT"}
+{"text": "Define the greenhouse effect.", "label": "DIRECT"}
+{"text": "Tell me today's date?", "label": "DATE"}
+{"text": "Explain a binary search tree.", "label": "DIRECT"}
+{"text": "What is 12 minus 8?", "label": "DIRECT"}
+{"text": "Give me a simple explanation of a transformer in deep learning.", "label": "DIRECT"}
+{"text": "What day was 1 January 2027?", "label": "DATE"}
+{"text": "If I have 12 apples and give away 8, how many remain?", "label": "DIRECT"}
+{"text": "What is the current price of Microsoft?", "label": "WEB"}
+{"text": "Explain machine learning.", "label": "DIRECT"}
+{"text": "any recent news on Bitcoin?", "label": "WEB"}
+{"text": "Convert 9 kilometers to miles.", "label": "DIRECT"}
+{"text": "Give me today's news about the housing market.", "label": "WEB"}
+{"text": "Which day of the week was 31 October 2026?", "label": "DATE"}
+{"text": "Explain what a leap year is.", "label": "DIRECT"}
+{"text": "What's your favorite color?", "label": "DIRECT"}
+{"text": "Search for the latest artificial general intelligence news.", "label": "WEB"}
+{"text": "How does blockchain technology work?", "label": "DIRECT"}
+{"text": "Give me a simple explanation of the water cycle.", "label": "DIRECT"}
+{"text": "Explain big-O notation.", "label": "DIRECT"}
+{"text": "What is the Pythagorean theorem?", "label": "DIRECT"}
+{"text": "Can you describe large language models and also find the latest research on it?", "label": "WEB"}
+{"text": "If I have 45 apples and give away 22, how many remain?", "label": "DIRECT"}
+{"text": "Find online what's new with cryptocurrency regulation.", "label": "WEB"}
+{"text": "If I have 100 apples and give away 37, how many remain?", "label": "DIRECT"}
+{"text": "Time please?", "label": "TIME"}
+{"text": "Can you explain DNA replication to me?", "label": "DIRECT"}
+{"text": "search the web for the World Cup", "label": "WEB"}
+{"text": "Can you proofread this sentence for grammar?", "label": "DIRECT"}
+{"text": "Give me some tips for staying productive.", "label": "DIRECT"}
+{"text": "what is the time now", "label": "TIME"}
+{"text": "Can you look up the latest the stock market updates?", "label": "WEB"}
+{"text": "What does the water cycle mean?", "label": "DIRECT"}
+{"text": "What's new with cybersecurity this week?", "label": "WEB"}
+{"text": "search the web for Apple", "label": "WEB"}
+{"text": "Convert 100 kilometers to miles.", "label": "DIRECT"}
+{"text": "I'm confused about a neural network, can you clarify?", "label": "DIRECT"}
+{"text": "What is the current price of Nvidia?", "label": "WEB"}
+{"text": "What weekday is 23 June 2027?", "label": "DATE"}
+{"text": "Can you give me a time check?", "label": "TIME"}
+{"text": "What does photosynthesis mean?", "label": "DIRECT"}
+{"text": "What is the square root of 13?", "label": "DIRECT"}
+{"text": "Which day of the week was 1 January 2027?", "label": "DATE"}
+{"text": "Can you explain an algorithm to me?", "label": "DIRECT"}
+{"text": "Search for the latest remote work trends news.", "label": "WEB"}
+{"text": "whats the latest on renewable energy", "label": "WEB"}
+{"text": "What is 12 + 8?", "label": "DIRECT"}
+{"text": "Can you look up the latest inflation updates?", "label": "WEB"}
+{"text": "What day was 9 November 2025?", "label": "DATE"}
+{"text": "I'm confused about the Pythagorean theorem, can you clarify?", "label": "DIRECT"}
+{"text": "What is fusion energy, and what are the latest breakthroughs in it?", "label": "WEB"}
+{"text": "What is 45 minus 22?", "label": "DIRECT"}
+{"text": "Give me a simple explanation of REST APIs.", "label": "DIRECT"}
+{"text": "Convert 12 kilometers to miles.", "label": "DIRECT"}
+{"text": "Can you describe autonomous vehicles and also find the latest research on it?", "label": "WEB"}
+{"text": "Tell me the current time please.", "label": "TIME"}
+{"text": "Search the web for Tesla.", "label": "WEB"}
+{"text": "What is currently happening in the semiconductor industry?", "label": "WEB"}
+{"text": "Can u tell me the time?", "label": "TIME"}
+{"text": "What is the latest version of Node.js?", "label": "WEB"}
+{"text": "What is the latest news about inflation?", "label": "WEB"}
+{"text": "What is 7 minus 6?", "label": "DIRECT"}
+{"text": "What's new with Microsoft this week?", "label": "WEB"}
+{"text": "what time is it now", "label": "TIME"}
+{"text": "Give me today's news about remote work trends.", "label": "WEB"}
+{"text": "What is happening with the NBA right now?", "label": "WEB"}
+{"text": "I'd like to know what time it is.", "label": "TIME"}
+{"text": "What is IBM working on currently?", "label": "WEB"}
+{"text": "Can you tell me the time?", "label": "TIME"}
+{"text": "What does object-oriented programming mean?", "label": "DIRECT"}
+{"text": "Explain osmosis.", "label": "DIRECT"}
+{"text": "What is the current price of Tesla?", "label": "WEB"}
+{"text": "Give me today's news about Bitcoin.", "label": "WEB"}
+{"text": "What is today's lesson about, generally speaking, in a typical algebra class?", "label": "DIRECT"}
+{"text": "Define a neural network.", "label": "DIRECT"}
+{"text": "Has Amazon released anything new recently?", "label": "WEB"}
+{"text": "What are the latest developments in the housing market?", "label": "WEB"}
+{"text": "Please tell me the current local time.", "label": "TIME"}
+{"text": "What is a binary search tree?", "label": "DIRECT"}
+{"text": "Time, please?", "label": "TIME"}
+{"text": "What is the latest version of Chrome?", "label": "WEB"}
+{"text": "Who is the current CEO of Samsung?", "label": "WEB"}
+{"text": "Could you check the time for me?", "label": "TIME"}
+{"text": "What is the square root of 12?", "label": "DIRECT"}
+{"text": "What is gene therapy, and what are the latest breakthroughs in it?", "label": "WEB"}
+{"text": "What is 81 + 1?", "label": "DIRECT"}
+{"text": "I'm confused about the central limit theorem, can you clarify?", "label": "DIRECT"}
+{"text": "What is the latest news about chip manufacturing?", "label": "WEB"}
+{"text": "What's the clock reading right now?", "label": "TIME"}
+{"text": "Has IBM released anything new recently?", "label": "WEB"}
+{"text": "How do I convert local time to UTC manually?", "label": "DIRECT"}
+{"text": "What are people saying about cybersecurity today?", "label": "WEB"}
+{"text": "What is current in programming, like functional versus object-oriented style?", "label": "DIRECT"}
+{"text": "What time signature is used in a waltz?", "label": "DIRECT"}
+{"text": "What day was 25 December 2026?", "label": "DATE"}
+{"text": "Can you explain photosynthesis to me?", "label": "DIRECT"}
+{"text": "What are some good icebreaker questions?", "label": "DIRECT"}
+{"text": "What are people saying about Tesla today?", "label": "WEB"}
+{"text": "Can you explain quantum entanglement to me?", "label": "DIRECT"}
+{"text": "What is currently happening in Bitcoin?", "label": "WEB"}
+{"text": "What is currently happening in the housing market?", "label": "WEB"}
+{"text": "Can you describe gene therapy and also find the latest research on it?", "label": "WEB"}
+{"text": "If I have 64 apples and give away 1, how many remain?", "label": "DIRECT"}
+{"text": "Can you summarize the plot of Romeo and Juliet?", "label": "DIRECT"}
+{"text": "any recent news on climate change?", "label": "WEB"}
+{"text": "Tell me today's date.", "label": "DATE"}
+{"text": "Tell me about recent developments in the World Cup.", "label": "WEB"}
+{"text": "What is the current date?", "label": "DATE"}
+{"text": "What is happening with cybersecurity right now?", "label": "WEB"}
+{"text": "What's new with cryptocurrency regulation this week?", "label": "WEB"}
+{"text": "What is currently happening in self-driving cars?", "label": "WEB"}
+{"text": "What does a hash table mean?", "label": "DIRECT"}
+{"text": "Which day of the week was 9 November 2025?", "label": "DATE"}
+{"text": "What is the time now?", "label": "TIME"}
+{"text": "What day of the week is 31 October 2026?", "label": "DATE"}
+{"text": "what's the current local time", "label": "TIME"}
+{"text": "any recent news on cybersecurity?", "label": "WEB"}
+{"text": "whats the latest on cryptocurrency regulation", "label": "WEB"}
+{"text": "Explain inheritance in programming.", "label": "DIRECT"}
+{"text": "hey what time is it", "label": "TIME"}
+{"text": "Convert 64 kilometers to miles.", "label": "DIRECT"}
+{"text": "Who is the current CEO of Google?", "label": "WEB"}
+{"text": "what's today's date", "label": "DATE"}
+{"text": "Can you explain a neural network to me?", "label": "DIRECT"}
+{"text": "What is the current state of the stock market?", "label": "WEB"}
+{"text": "what's the time right now", "label": "TIME"}
+{"text": "What is Amazon working on currently?", "label": "WEB"}
+{"text": "What is Netflix working on currently?", "label": "WEB"}
+{"text": "Look up current information about inflation.", "label": "WEB"}
+{"text": "What's today's date?", "label": "DATE"}
+{"text": "Give me a simple explanation of big-O notation.", "label": "DIRECT"}
+{"text": "What's the time right now?", "label": "TIME"}
+{"text": "How does a current transformer work in electronics?", "label": "DIRECT"}
+{"text": "What weekday is 15 August 2026?", "label": "DATE"}
+{"text": "Convert 45 kilometers to miles.", "label": "DIRECT"}
+{"text": "search the web for Tesla", "label": "WEB"}
+{"text": "current time?", "label": "TIME"}
+{"text": "Convert 7 kilometers to miles.", "label": "DIRECT"}
+{"text": "What day of the week is 4 July 2025?", "label": "DATE"}
+{"text": "Explain a database index.", "label": "DIRECT"}

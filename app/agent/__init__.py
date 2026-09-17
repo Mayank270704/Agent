@@ -18,6 +18,13 @@ from app.agent.evaluation import (
     format_report,
     summarize,
 )
+from app.agent.local_embeddings import (
+    DEFAULT_EMBEDDING_MODEL_NAME,
+    EmbeddingComputeError,
+    EmbeddingError,
+    EmbeddingModelLoadError,
+    LocalEmbeddingProvider,
+)
 from app.agent.loop import ActionType, AgentDecision, AgentLoop, DecisionMaker, DecisionMakerError
 from app.agent.memory_context import MemoryContext, MemoryContextItem, build_memory_context
 from app.agent.memory_extraction import (
@@ -27,7 +34,14 @@ from app.agent.memory_extraction import (
     MemoryExtractor,
 )
 from app.agent.memory_formatting import MEMORY_CONTEXT_LABEL, format_memory_context
-from app.agent.memory_retriever import MemoryRetriever, RetrievedMemory, SemanticMemoryRetriever
+from app.agent.memory_retriever import (
+    DEFAULT_MAX_CONTEXT_CHARS,
+    DEFAULT_MAX_TOP_K,
+    DEFAULT_TOP_K,
+    MemoryRetriever,
+    RetrievedMemory,
+    SemanticMemoryRetriever,
+)
 from app.agent.memory_writer import MemoryWriter, SemanticMemoryWriter, rejection_reason
 from app.agent.memory import (
     ConversationMemory,
@@ -39,11 +53,32 @@ from app.agent.orchestrator import AgentOrchestrator, AgentResult
 from app.agent.plan import Plan, PlanGenerator, PlanStatus, PlanStep
 from app.agent.plan_generator import LLMPlanGenerator, PlanGenerationError
 from app.agent.router import Router, RouterDecision, RoutingHint
-from app.agent.semantic_memory import InMemorySemanticMemory, SemanticMemoryRecord, SemanticMemoryStore
+from app.agent.semantic_memory import (
+    InMemorySemanticMemory,
+    MemorySessionIsolationError,
+    SemanticMemoryRecord,
+    SemanticMemoryStore,
+)
 from app.agent.vector_index import InMemoryVectorIndex, VectorIndex, VectorSearchResult, cosine_similarity
-from app.agent.state import AgentState, AgentStatus, ExecutionError, Observation, ToolCall
+from app.agent.state import AgentState, AgentStatus, CorrectionNote, ExecutionError, Observation, ToolCall
+from app.agent.reliability import (
+    DEFAULT_MAX_CORRECTIONS,
+    BudgetedCorrectionPolicy,
+    CorrectionAction,
+    CorrectionPolicy,
+    CorrectionVerdict,
+    Failure,
+    FailureCategory,
+)
+from app.agent.permissions import (
+    AllowlistPermissionPolicy,
+    ExecutionContext,
+    PermissionDecision,
+    PermissionPolicy,
+)
+from app.agent.tool_execution import ConfirmationRequiredError, PermissionDeniedError, ToolExecutionGate
 from app.agent.tool_registry import ToolNotFoundError, ToolRegistrationError, ToolRegistry
-from app.tools.base import ToolDescriptor
+from app.tools.base import RiskLevel, ToolCapability, ToolDescriptor
 
 __all__ = [
     "Router",
@@ -52,12 +87,29 @@ __all__ = [
     "ToolRegistry",
     "ToolRegistrationError",
     "ToolNotFoundError",
+    "FailureCategory",
+    "Failure",
+    "CorrectionAction",
+    "CorrectionVerdict",
+    "CorrectionPolicy",
+    "BudgetedCorrectionPolicy",
+    "DEFAULT_MAX_CORRECTIONS",
     "ToolDescriptor",
+    "ToolCapability",
+    "RiskLevel",
+    "PermissionDecision",
+    "PermissionPolicy",
+    "AllowlistPermissionPolicy",
+    "ExecutionContext",
+    "ToolExecutionGate",
+    "PermissionDeniedError",
+    "ConfirmationRequiredError",
     "AgentState",
     "AgentStatus",
     "ToolCall",
     "Observation",
     "ExecutionError",
+    "CorrectionNote",
     "Plan",
     "PlanStatus",
     "PlanStep",
@@ -96,9 +148,15 @@ __all__ = [
     "SemanticMemoryStore",
     "SemanticMemoryRecord",
     "InMemorySemanticMemory",
+    "MemorySessionIsolationError",
     "EmbeddingProvider",
     "DeterministicEmbeddingProvider",
     "Vector",
+    "LocalEmbeddingProvider",
+    "EmbeddingError",
+    "EmbeddingModelLoadError",
+    "EmbeddingComputeError",
+    "DEFAULT_EMBEDDING_MODEL_NAME",
     "VectorIndex",
     "InMemoryVectorIndex",
     "VectorSearchResult",
@@ -106,6 +164,9 @@ __all__ = [
     "MemoryRetriever",
     "RetrievedMemory",
     "SemanticMemoryRetriever",
+    "DEFAULT_TOP_K",
+    "DEFAULT_MAX_TOP_K",
+    "DEFAULT_MAX_CONTEXT_CHARS",
     "MemoryContext",
     "MemoryContextItem",
     "build_memory_context",

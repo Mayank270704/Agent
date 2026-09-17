@@ -43,18 +43,51 @@ What it deliberately does NOT own (later, separately scoped milestones)
   here writes: `retrieve()` is a pure read.
 - Populating the vector index. This module assumes the index is ALREADY
   populated — see the read/write split below.
-- Any threshold beyond the optional `min_similarity` added in Step 16F-E.
-  That one defaults to -1.0 (no filtering), deliberately: a useful cut-off
-  is a property of the embedding model in use, and the only provider that
-  exists is the deterministic test one, whose similarities carry no
-  semantic meaning. Picking a non-zero default now would be a magic
-  constant calibrated against nothing, so it must be set explicitly and
-  recalibrated whenever the model changes.
-- Any ranking beyond the VectorIndex's similarity ordering. The record's
-  `created_at` and `confidence` fields are deliberately NOT combined with
-  similarity here — recency/confidence weighting is future work, and
-  implementing it now would bake a scoring formula in before there is a
-  real embedding model to calibrate it against.
+- Any RELEVANCE threshold beyond the optional `min_similarity` added in
+  Step 16F-E. That one defaults to -1.0 (no filtering), deliberately: a
+  useful cut-off is a property of the embedding model in use, and the only
+  provider that exists is the deterministic test one, whose similarities
+  carry no semantic meaning. Picking a non-zero default now would be a
+  magic constant calibrated against nothing, so it must be set explicitly
+  and recalibrated whenever the model changes. Step 16G reviewed this and
+  changed nothing about it — the default stays the true no-op.
+
+  The SAFETY bounds added in 16G (`max_top_k`, `max_context_chars`) are a
+  different kind of thing and do have real defaults, for a reason worth
+  stating: a relevance threshold encodes a judgment about an embedding
+  model nobody has calibrated yet, whereas a size bound encodes only "a
+  prompt must be finite", which is true of every model that will ever sit
+  behind this. One must be opted into; the other must be impossible to opt
+  out of.
+- Any ranking beyond the VectorIndex's similarity ordering. Cosine
+  similarity remains the SOLE ordering signal, re-affirmed in 16G:
+
+  * `confidence` stays METADATA. It is not a calibrated probability (see
+    SemanticMemoryRecord), so multiplying it into a similarity score would
+    produce a number with no meaning in either unit. The place a
+    confidence policy legitimately lives is the WRITE path, where
+    SemanticMemoryWriter already drops candidates below `min_confidence`
+    (16F-D) at the one moment the value is actually decided; a second
+    floor here would be the same policy in two places, free to drift
+    apart, filtering a value that cannot change after the write.
+  * `created_at` stays METADATA. A newer fact is not a more RELEVANT one,
+    and blending recency into the score would quietly answer "what
+    changed most recently?" when the caller asked "what is most similar?".
+    Where recency genuinely matters — two remembered facts disagreeing —
+    it is already served correctly: 16E-B renders each memory's date, so
+    the MODEL weighs currency with the facts in front of it, rather than
+    this layer silently deciding the question by reordering.
+- Read-time duplicate suppression. 16F-A handles duplicates at WRITE time,
+  merging a candidate at or above `duplicate_threshold` into the existing
+  record and keeping one canonical fact with merged provenance. That is
+  strictly the better place: it is decided once, with the full candidate in
+  hand, and it leaves the store holding what it claims to hold. A
+  read-time pass would have to re-decide it on every query, would have to
+  pick a loser among records the store considers equally real, and — with
+  identical content producing an identical vector, hence similarity 1.0 —
+  would only ever fire on duplicates the write path already merges. It
+  would therefore add a way to drop a distinct-but-similar fact while
+  fixing nothing. Deliberately absent.
 - Conflict resolution / supersession. This module READS the `active`
   flag (see SemanticMemoryRetriever's docstring) but never sets it, and
   implements no notion of one fact superseding another.
@@ -97,12 +130,50 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from app.agent.embeddings import EmbeddingProvider
-from app.agent.semantic_memory import SemanticMemoryRecord, SemanticMemoryStore
+from app.agent.semantic_memory import (
+    MemorySessionIsolationError,
+    SemanticMemoryRecord,
+    SemanticMemoryStore,
+)
 from app.agent.vector_index import VectorIndex
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_K = 5
+
+# Hard ceiling on what a caller may ask for (Step 16G). `top_k` was
+# previously validated only as ">= 1", so `retrieve(s, q, top_k=100_000)`
+# was accepted and would have put every fact a session owns into a prompt.
+# 20 is well above any plausible legitimate request (the agent asks for 5)
+# and far below anything that could blow a context window.
+#
+# Exceeding it RAISES rather than being clamped down to the ceiling:
+# silently serving 20 results to a caller who asked for 100 would hide a
+# configuration bug behind behavior that looks like it worked.
+DEFAULT_MAX_TOP_K = 20
+
+# Total budget, in CHARACTERS of memory content, for one retrieval's
+# results (Step 16G).
+#
+# Characters, not tokens, and this is an APPROXIMATION of a token budget,
+# not a measurement of one. At the usual rough English heuristic of ~4
+# characters per token, 4000 characters is on the order of 1000 tokens. A
+# real tokenizer would be exact, but it would mean a model-specific
+# dependency (tiktoken/transformers) in the retrieval layer for a bound
+# whose only job is to stop an unbounded prompt — a character count does
+# that with no dependency at all, and errs on the safe side because no
+# tokenizer emits MORE than one token per character. Swapping in a
+# tokenizer later changes only the accounting inside `retrieve`, not this
+# module's contract.
+#
+# Why a budget is needed even with `max_top_k` in place: nothing bounds
+# `SemanticMemoryRecord.content`. The 300-character cap lives on
+# `MemoryCandidate` (16F), so it constrains only facts that came through
+# an extractor — a record written straight into a SemanticMemoryStore can
+# be any size. top_k alone therefore bounds the NUMBER of memories but not
+# the SIZE of the block they render into; both bounds together are what
+# make the memory section of the prompt provably finite.
+DEFAULT_MAX_CONTEXT_CHARS = 4000
 
 
 @dataclass(frozen=True)
@@ -230,7 +301,28 @@ class SemanticMemoryRetriever:
     Because any of the three can drop a hit, `retrieve()` may return FEWER
     than top_k results even when the index found top_k matches. Results
     are never padded to reach top_k, consistent with the VectorIndex's own
-    contract.
+    contract. Step 16G adds a fourth, later reason (the character budget
+    — see `_apply_context_budget`), which differs from all three above in
+    that it drops a SUFFIX of otherwise-valid results rather than
+    individual hits.
+
+    --------------------------------------------------------------------
+    Bounds (Step 16G) — why retrieval, not the index, owns them
+    --------------------------------------------------------------------
+    `max_top_k` and `max_context_chars` are enforced here rather than in
+    VectorIndex for the same reason `min_similarity` is: the index's job
+    is "the nearest K vectors in this partition", a question with a
+    mathematically correct answer for any K. "How much of that is safe to
+    put in front of a model" is a RETRIEVAL POLICY question — it depends
+    on the consumer, not on the geometry — and this class is where that
+    policy already lives. Capping the index instead would also make it
+    impossible to ask the index a large diagnostic query (tests do), which
+    is a legitimate use with no prompt attached.
+
+    Together they make the memory block finite BY CONSTRUCTION rather than
+    by convention: at most `max_top_k` records, totalling at most
+    `max_context_chars` characters of content, with no configuration —
+    accidental or deliberate — that removes either bound.
 
     --------------------------------------------------------------------
     Session isolation and ordering
@@ -258,6 +350,8 @@ class SemanticMemoryRetriever:
         # discard every orthogonal-or-worse match rather than being a
         # no-op.
         min_similarity: float = -1.0,
+        max_top_k: int = DEFAULT_MAX_TOP_K,
+        max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
     ):
         if not isinstance(semantic_memory, SemanticMemoryStore):
             raise ValueError("semantic_memory must implement the SemanticMemoryStore protocol.")
@@ -276,10 +370,29 @@ class SemanticMemoryRetriever:
         if not (-1.0 <= float(min_similarity) <= 1.0):
             raise ValueError("min_similarity must be within [-1.0, 1.0].")
 
+        # Both bounds are CONFIGURATION, so they are validated eagerly here
+        # rather than on the first retrieve() — same reasoning as the
+        # dimension check above: a bad bound breaks every retrieval without
+        # exception, so it is a wiring bug and belongs at wiring time.
+        # Neither accepts None: "no limit" is not an option this class
+        # offers, because the whole point of Step 16G is that there is no
+        # configuration, accidental or deliberate, that produces an
+        # unbounded prompt.
+        if not isinstance(max_top_k, int) or isinstance(max_top_k, bool) or max_top_k < 1:
+            raise ValueError("max_top_k must be an integer >= 1.")
+        if (
+            not isinstance(max_context_chars, int)
+            or isinstance(max_context_chars, bool)
+            or max_context_chars < 1
+        ):
+            raise ValueError("max_context_chars must be an integer >= 1.")
+
         self.semantic_memory = semantic_memory
         self.embedding_provider = embedding_provider
         self.vector_index = vector_index
         self.min_similarity = float(min_similarity)
+        self.max_top_k = max_top_k
+        self.max_context_chars = max_context_chars
 
     def retrieve(self, session_id: str, query: str, top_k: int = DEFAULT_TOP_K) -> list[RetrievedMemory]:
         session_key = self._normalize(session_id)
@@ -287,6 +400,10 @@ class SemanticMemoryRetriever:
             raise ValueError("query must be a non-empty string.")
         if not isinstance(top_k, int) or isinstance(top_k, bool) or top_k < 1:
             raise ValueError("top_k must be an integer >= 1.")
+        if top_k > self.max_top_k:
+            raise ValueError(
+                f"top_k {top_k} exceeds this retriever's max_top_k of {self.max_top_k}."
+            )
 
         # The query — and ONLY the query — is embedded here. Stored memory
         # vectors are the index's business (see the module's read/write
@@ -322,7 +439,7 @@ class SemanticMemoryRetriever:
                 continue
 
             if record.session_id.strip() != session_key:
-                raise ValueError(
+                raise MemorySessionIsolationError(
                     f"session isolation violation: vector index returned memory_id {hit.memory_id!r} "
                     f"for session {session_key!r}, but the stored record belongs to session "
                     f"{record.session_id!r}."
@@ -333,7 +450,71 @@ class SemanticMemoryRetriever:
 
             retrieved.append(RetrievedMemory(memory=record, similarity=hit.similarity))
 
-        return retrieved
+        return self._apply_context_budget(retrieved, session_key)
+
+    def _apply_context_budget(
+        self, retrieved: list[RetrievedMemory], session_key: str
+    ) -> list[RetrievedMemory]:
+        """Truncate the result list so its total content stays within
+        `max_context_chars`.
+
+        ONE rule, applied in the order results already have (similarity
+        DESC): accumulate until an entry would push the running total past
+        the budget, then stop and drop it and everything after it. The
+        result is always a PREFIX of the unbudgeted result list, which is
+        what makes the outcome explainable ("you got the best N that fit")
+        and keeps the existing ordering guarantee intact — nothing is
+        re-ordered, and nothing later is promoted over something earlier.
+
+        The alternative — skipping an entry that does not fit and
+        continuing to look for smaller ones further down — was rejected.
+        It is a bin-packing policy dressed up as retrieval: it would let a
+        weaker match outrank a stronger one purely because it was shorter,
+        which is a ranking decision made on a signal (length) that has
+        nothing to do with relevance.
+
+        Consequence, stated plainly: a single record whose content alone
+        exceeds the entire budget yields an EMPTY result. That is the
+        honest outcome — it genuinely cannot be included without breaking
+        the bound — and it is logged at WARNING so it is diagnosable
+        rather than mysterious. It also cannot arise through the supported
+        write path, where `MemoryCandidate` already caps content at 300
+        characters (16F).
+
+        Only `content` is counted. This layer deliberately knows nothing
+        about how memories are later rendered (16E-B's JSON block, or
+        anything that replaces it), so it budgets the only thing that is
+        genuinely its own: the text it is handing over. The rendering
+        layer adds a small FIXED overhead per entry, and the number of
+        entries is itself bounded by `max_top_k`, so the rendered block is
+        bounded by `max_context_chars + max_top_k * overhead` — finite by
+        construction, without this module having to model the formatter.
+
+        Truncation never touches a record's text: entries are dropped
+        whole. Cutting a fact off mid-sentence would hand the model a
+        mutilated claim it has no way to recognize as incomplete, and
+        would break the guarantee that a returned `SemanticMemoryRecord`
+        is exactly what is stored, provenance included.
+        """
+        budgeted: list[RetrievedMemory] = []
+        used = 0
+        for index, entry in enumerate(retrieved):
+            cost = len(entry.memory.content)
+            if used + cost > self.max_context_chars:
+                logger.warning(
+                    "Memory context budget of %d characters reached for session %r after %d of %d "
+                    "result(s); dropping the remaining %d lower-similarity result(s).",
+                    self.max_context_chars,
+                    session_key,
+                    index,
+                    len(retrieved),
+                    len(retrieved) - index,
+                )
+                break
+            used += cost
+            budgeted.append(entry)
+
+        return budgeted
 
     def _normalize(self, session_id: str) -> str:
         if not isinstance(session_id, str) or not session_id.strip():

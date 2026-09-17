@@ -133,10 +133,15 @@ from app.agent.episodic_memory import EpisodicMemory, EpisodicMemoryRecord
 from app.agent.loop import AgentLoop, DecisionMaker
 from app.agent.memory import ConversationMemory
 from app.agent.memory_context import MemoryContext, build_memory_context
+from app.agent.local_embeddings import EmbeddingError
 from app.agent.memory_extraction import MemoryExtractionError, MemoryExtractor
 from app.agent.memory_retriever import MemoryRetriever
 from app.agent.memory_writer import MemoryWriter
 from app.agent.plan import Plan, PlanGenerator
+from app.agent.permissions import ExecutionContext
+from app.agent.reliability import CorrectionPolicy
+from app.agent.telemetry import EventEmitter, EventType, LLMPurpose, elapsed_ms, monotonic_start
+from app.agent.tool_execution import ToolExecutionGate
 from app.agent.plan_generator import PlanGenerationError
 from app.agent.state import AgentState, AgentStatus, ExecutionError, Observation, ToolCall
 from app.agent.tool_registry import ToolRegistry
@@ -205,6 +210,11 @@ class AgentOrchestrator:
         time_tool: Tool | None = None,
         date_tool: Tool | None = None,
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
+        correction_policy: CorrectionPolicy | None = None,
+        tool_execution_gate: ToolExecutionGate | None = None,
+        execution_context: ExecutionContext | None = None,
+        event_emitter: EventEmitter | None = None,
+        deterministic_temporal_routing: bool = False,
     ):
         self.llm = llm_client or LLMClient(
             provider=settings.llm_provider,
@@ -221,7 +231,22 @@ class AgentOrchestrator:
             self.tools.register(time_tool or TimeTool())
             self.tools.register(date_tool or DateTool())
 
-        self.decision_maker = decision_maker or LLMDecisionMaker(llm_client=self.llm, tool_registry=self.tools)
+        # Milestone 19: this class's own `event_emitter` (below) is threaded
+        # into a DEFAULT-constructed LLMDecisionMaker only — an explicitly
+        # injected `decision_maker` is left exactly as the caller built it
+        # (matching the same "extend, don't reach into a caller's object"
+        # rule this class already follows for `tools`/`llm`).
+        self.event_emitter = event_emitter
+        # `deterministic_temporal_routing` reaches a DEFAULT-constructed
+        # LLMDecisionMaker only, for the same reason `event_emitter` does:
+        # an explicitly injected `decision_maker` is left exactly as the
+        # caller built it.
+        self.decision_maker = decision_maker or LLMDecisionMaker(
+            llm_client=self.llm,
+            tool_registry=self.tools,
+            event_emitter=self.event_emitter,
+            deterministic_temporal_routing=deterministic_temporal_routing,
+        )
         # Deliberately NOT defaulted like decision_maker is — see the module
         # docstring. None means "no plan generation," exactly like before
         # Step 11; a caller opts in by passing one explicitly.
@@ -270,10 +295,31 @@ class AgentOrchestrator:
                     "episodic_memory is required when memory_extractor/memory_writer are supplied, "
                     "because semantic memories take their provenance from the episodic event."
                 )
+        # Step 17: pure pass-through, opt-in, default None — this class
+        # makes no decision about correction policy itself; it only forwards
+        # whatever it was given to AgentLoop, the sole component that
+        # consults it. With correction_policy=None (the default, and the
+        # only value any pre-Step-17 caller ever supplies), AgentLoop's own
+        # behavior is unchanged — see app/agent/loop.py and
+        # app/agent/reliability.py.
+        #
+        # Milestone 18-A: `tool_execution_gate`/`execution_context` are the
+        # IDENTICAL pure pass-through pattern, one milestone later. This
+        # class makes no authorization decision and constructs no
+        # PermissionPolicy of its own — it only forwards whatever the
+        # composition root (app/main.py, via app/services/chat.py) gave it.
+        # With both left at their default `None` (every pre-Milestone-18-A
+        # caller, and every test that does not explicitly opt in), AgentLoop
+        # resolves and executes tools exactly as it always has — see
+        # app/agent/loop.py and app/agent/tool_execution.py.
         self.loop = AgentLoop(
             decision_maker=self.decision_maker,
             tool_registry=self.tools,
             max_iterations=max_iterations,
+            correction_policy=correction_policy,
+            tool_execution_gate=tool_execution_gate,
+            execution_context=execution_context,
+            event_emitter=self.event_emitter,
         )
 
     def process(self, user_message: str) -> AgentResult:
@@ -281,7 +327,13 @@ class AgentOrchestrator:
             raise ValueError("User message cannot be empty.")
 
         cleaned_message = user_message.strip()
+        request_start = monotonic_start() if self.event_emitter is not None else None
+        if self.event_emitter is not None:
+            self.event_emitter.emit(EventType.REQUEST_STARTED)
+
         plan = self._generate_plan_or_none(cleaned_message)
+        if plan is not None and self.event_emitter is not None:
+            self.event_emitter.emit(EventType.PLAN_CREATED, plan_step_count=len(plan.steps))
         previous_messages = self.memory.get_messages() if self.memory is not None else []
         memory_context = self._retrieve_memory_context_or_none(cleaned_message)
         state = AgentState(
@@ -297,6 +349,14 @@ class AgentOrchestrator:
         episode = self._maybe_record_episode(cleaned_message, answer, state)
         self._maybe_write_semantic_memory(cleaned_message, answer, state, episode)
 
+        if self.event_emitter is not None:
+            request_event = EventType.REQUEST_COMPLETED if state.status == AgentStatus.COMPLETED else EventType.REQUEST_FAILED
+            self.event_emitter.emit(
+                request_event,
+                duration_ms=elapsed_ms(request_start),  # type: ignore[arg-type]
+                success=state.status == AgentStatus.COMPLETED,
+            )
+
         return AgentResult(
             answer=answer,
             status=state.status,
@@ -307,9 +367,28 @@ class AgentOrchestrator:
         )
 
     def _failure_answer(self, state: AgentState) -> str:
+        """A generic, client-safe failure message (Step 17 hardening, F8).
+
+        Previously this interpolated `state.errors[-1].message` DIRECTLY
+        into the user-facing answer — which could echo internal detail
+        never meant for an end user: the full list of registered tool
+        names (from an UNKNOWN_TOOL failure), a configuration/credential
+        NAME (e.g. WebSearchTool's "Missing TAVILY_API_KEY configuration.
+        Set it in the .env file." ValueError), or raw model-output-parsing
+        detail. None of that belongs in an HTTP response body an external
+        caller reads (see app/main.py, which returns this text as-is).
+
+        The detail is logged instead, at WARNING, where an operator — not
+        the end user — can see it. This is a genuine behavior change to
+        the ANSWER text (the generic sentence below), but the substring
+        "could not complete this request" is preserved deliberately: it is
+        asserted by existing tests (test_chat_service.py, test_orchestrator.py,
+        test_memory_integration.py) and there is no reason to also change
+        wording those tests do not care about.
+        """
         if state.errors:
-            return f"I could not complete this request: {state.errors[-1].message}"
-        return "I could not complete this request due to an unexpected failure."
+            logger.warning("Request execution failed: %s", state.errors[-1].message)
+        return "I could not complete this request due to an internal error. Please try again."
 
     def _generate_plan_or_none(self, user_message: str) -> Plan | None:
         """No-op (returns None) unless a plan_generator was explicitly
@@ -327,11 +406,36 @@ class AgentOrchestrator:
         if self.plan_generator is None:
             return None
 
+        if self.event_emitter is None:
+            try:
+                return self.plan_generator.generate(user_message)
+            except PlanGenerationError as exc:
+                logger.warning("Plan generation failed for %r: %s — continuing without a plan.", user_message, exc)
+                return None
+
+        self.event_emitter.emit(EventType.LLM_CALL_STARTED, llm_purpose=LLMPurpose.PLAN)
+        start = monotonic_start()
         try:
-            return self.plan_generator.generate(user_message)
+            plan = self.plan_generator.generate(user_message)
         except PlanGenerationError as exc:
+            self.event_emitter.emit(
+                EventType.LLM_CALL_FAILED, llm_purpose=LLMPurpose.PLAN, duration_ms=elapsed_ms(start), success=False
+            )
             logger.warning("Plan generation failed for %r: %s — continuing without a plan.", user_message, exc)
             return None
+        except Exception:
+            # Telemetry observes, never converts: any OTHER exception
+            # (e.g. a RuntimeError from an unreachable LLM backend) still
+            # propagates completely unchanged — see the module docstring's
+            # note that a RuntimeError here is deliberately not caught.
+            self.event_emitter.emit(
+                EventType.LLM_CALL_FAILED, llm_purpose=LLMPurpose.PLAN, duration_ms=elapsed_ms(start), success=False
+            )
+            raise
+        self.event_emitter.emit(
+            EventType.LLM_CALL_COMPLETED, llm_purpose=LLMPurpose.PLAN, duration_ms=elapsed_ms(start), success=True
+        )
+        return plan
 
     def _retrieve_memory_context_or_none(self, user_message: str) -> MemoryContext | None:
         """No-op (returns None) unless a memory_retriever was explicitly
@@ -354,18 +458,40 @@ class AgentOrchestrator:
         `self.session_id`, which is non-empty whenever a retriever is
         present (enforced in __init__).
 
-        Exceptions are deliberately NOT caught here. The only failures the
-        retriever raises today are input-validation errors and session-
-        isolation violations, and a session-isolation violation is a
-        security signal that must never be silently degraded into "no
-        memory." Making retrieval failure non-fatal needs a dedicated
-        error type to distinguish infrastructure failure from an
-        integrity violation — deferred, see the Step 16E-C report.
+        Exceptions are caught NARROWLY, by type, exactly once here (Step
+        16I closes the gap the Step 16E-C report deferred): an
+        `EmbeddingError` (app/agent/local_embeddings.py — raised when a
+        real embedding provider cannot be loaded or fails to compute a
+        vector) degrades to "no memory this turn," logged at WARNING with
+        only the exception's TYPE NAME and the session id — never the
+        query text, never memory content, and never `str(exc)`, which for
+        an embedding failure could echo the text that was being embedded.
+        The request still answers; it simply answers without semantic
+        memory, exactly as if no retriever had been injected at all.
+
+        Every OTHER failure the retriever can raise is deliberately NOT
+        caught here: a plain `ValueError` for bad input, and
+        `MemorySessionIsolationError` (itself a `ValueError` subclass, see
+        app/agent/semantic_memory.py) for a cross-session integrity
+        violation, both propagate unchanged. A security signal must never
+        be silently degraded into "no memory" — only an infrastructure
+        failure in the embedding layer is eligible for that degradation.
+        This is the identical policy `_maybe_write_semantic_memory` applies
+        on the write side, and for the same reason.
         """
         if self.memory_retriever is None:
             return None
 
-        retrieved = self.memory_retriever.retrieve(self.session_id, user_message)
+        try:
+            retrieved = self.memory_retriever.retrieve(self.session_id, user_message)
+        except EmbeddingError as exc:
+            logger.warning(
+                "Semantic memory retrieval failed (%s) for session %r — answering without memory.",
+                type(exc).__name__,
+                self.session_id,
+            )
+            return None
+
         return build_memory_context(self.session_id, retrieved)
 
     def _maybe_commit_to_memory(self, user_message: str, answer: str, state: AgentState) -> None:
@@ -459,23 +585,75 @@ class AgentOrchestrator:
         `_generate_plan_or_none`'s handling of PlanGenerationError. The
         catch is deliberately narrow — it cannot swallow the writer's
         validation or session errors, which stay loud.
+
+        A SECOND, independent degradation exists around the write call
+        itself (Step 16I): an `EmbeddingError` raised while the writer
+        embeds a candidate's content is caught, logged at WARNING with
+        only the exception's TYPE NAME, the session id, and the candidate
+        COUNT (never candidate text, never `str(exc)`), and the candidates
+        are simply discarded. The answer the user already received is
+        never affected — by this point in `process()` it has already been
+        computed and will be returned regardless. Exactly like the read
+        side, `ValueError` and `MemorySessionIsolationError` are NOT
+        `EmbeddingError` and are NOT caught here: a security or integrity
+        failure during a write must surface, never be swallowed alongside
+        an ordinary embedding infrastructure failure.
         """
         if self.memory_extractor is None or self.memory_writer is None:
             return
         if state.status != AgentStatus.COMPLETED or episode is None:
             return
 
-        try:
-            candidates = self.memory_extractor.extract(user_message, answer)
-        except MemoryExtractionError as exc:
-            logger.warning("Memory extraction failed for %r: %s — storing no semantic memory.", user_message, exc)
-            return
+        if self.event_emitter is None:
+            try:
+                candidates = self.memory_extractor.extract(user_message, answer)
+            except MemoryExtractionError as exc:
+                logger.warning("Memory extraction failed for %r: %s — storing no semantic memory.", user_message, exc)
+                return
+        else:
+            self.event_emitter.emit(EventType.LLM_CALL_STARTED, llm_purpose=LLMPurpose.EXTRACT)
+            start = monotonic_start()
+            try:
+                candidates = self.memory_extractor.extract(user_message, answer)
+            except MemoryExtractionError as exc:
+                self.event_emitter.emit(
+                    EventType.LLM_CALL_FAILED,
+                    llm_purpose=LLMPurpose.EXTRACT,
+                    duration_ms=elapsed_ms(start),
+                    success=False,
+                )
+                logger.warning("Memory extraction failed for %r: %s — storing no semantic memory.", user_message, exc)
+                return
+            except Exception:
+                self.event_emitter.emit(
+                    EventType.LLM_CALL_FAILED,
+                    llm_purpose=LLMPurpose.EXTRACT,
+                    duration_ms=elapsed_ms(start),
+                    success=False,
+                )
+                raise
+            self.event_emitter.emit(
+                EventType.LLM_CALL_COMPLETED,
+                llm_purpose=LLMPurpose.EXTRACT,
+                duration_ms=elapsed_ms(start),
+                success=True,
+                item_count=len(candidates),
+            )
 
         if not candidates:
             return
 
-        self.memory_writer.write(
-            session_id=self.session_id,
-            candidates=candidates,
-            source_event_ids=(episode.event_id,),
-        )
+        try:
+            self.memory_writer.write(
+                session_id=self.session_id,
+                candidates=candidates,
+                source_event_ids=(episode.event_id,),
+            )
+        except EmbeddingError as exc:
+            logger.warning(
+                "Semantic memory write failed (%s) for session %r — answer preserved, "
+                "%d candidate(s) discarded.",
+                type(exc).__name__,
+                self.session_id,
+                len(candidates),
+            )

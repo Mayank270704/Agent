@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 
 from app.config import settings
-from app.tools.base import ToolResult
+from app.tools.base import RiskLevel, ToolCapability, ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,16 @@ class WebSearchTool:
     description = "Search the web for current information using the Tavily Search API."
     input_schema: dict[str, str] = {"query": "string"}
     output_description = "A list of web search results, each with title, url, content, and source metadata."
+    # Milestone 18: this tool's defining characteristic is the external
+    # HTTP call to a third-party API (Tavily) — untrusted response
+    # content, the query leaving this process, and independent network
+    # failure modes — not a local read/write distinction, hence
+    # EXTERNAL_NETWORK rather than READ. Classified MEDIUM (not LOW) for
+    # that reason, though it remains non-destructive and needs no
+    # confirmation.
+    capability = ToolCapability.EXTERNAL_NETWORK
+    risk_level = RiskLevel.MEDIUM
+    requires_confirmation = False
 
     def __init__(self):
         self.api_key = settings.tavily_api_key

@@ -1,0 +1,20 @@
+# Optional dependencies for Step 16H's real local embedding provider
+# (app/agent/local_embeddings.py).
+#
+# Deliberately NOT in requirements.txt. Nothing in the running application
+# constructs LocalEmbeddingProvider, so the deployed agent needs neither
+# torch nor a model download; installing this is opt-in, for anyone who
+# wants real semantic retrieval or wants to run the integration-marked
+# tests.
+#
+#     pip install -r requirements-embeddings.txt
+#
+# Size warning, so it is not a surprise: torch's CPU wheel is a few hundred
+# MB, and the default model (sentence-transformers/all-MiniLM-L6-v2) adds
+# ~90 MB of weights to the Hugging Face cache on first use. After that first
+# download, inference is entirely local and offline.
+#
+# No API key is required, and none is ever read: embeddings are computed on
+# this machine, not by a hosted service.
+
+sentence-transformers>=3.0.0

@@ -290,6 +290,92 @@ def test_tool_decision_with_null_tool_input_is_allowed_for_no_input_tools() -> N
 
 
 # ---------------------------------------------------------------------------
+# Milestone 21: dict/list tool_input is normalized to a deterministic JSON
+# string rather than rejected outright (Milestone 20 diagnostic finding —
+# 3/20 cases were exactly this shape).
+# ---------------------------------------------------------------------------
+
+def test_dict_tool_input_is_normalized_to_a_json_string() -> None:
+    registry = _registry_with(FakeTool("web_search", "Search the web."))
+    llm = FakeLLM([json.dumps({
+        "action_type": "tool", "tool_name": "web_search",
+        "tool_input": {"query": "latest AI news", "recency": "week"},
+    })])
+    decision_maker = LLMDecisionMaker(llm_client=llm, tool_registry=registry)
+
+    decision = decision_maker.decide(AgentState(user_input="hello"))
+
+    assert decision.tool_name == "web_search"
+    assert isinstance(decision.tool_input, str)
+    assert json.loads(decision.tool_input) == {"query": "latest AI news", "recency": "week"}
+
+
+def test_list_tool_input_is_normalized_to_a_json_string() -> None:
+    registry = _registry_with(FakeTool("web_search", "Search the web."))
+    llm = FakeLLM([json.dumps({
+        "action_type": "tool", "tool_name": "web_search",
+        "tool_input": ["latest AI news", "this week"],
+    })])
+    decision_maker = LLMDecisionMaker(llm_client=llm, tool_registry=registry)
+
+    decision = decision_maker.decide(AgentState(user_input="hello"))
+
+    assert decision.tool_name == "web_search"
+    assert isinstance(decision.tool_input, str)
+    assert json.loads(decision.tool_input) == ["latest AI news", "this week"]
+
+
+def test_dict_tool_input_normalization_is_deterministic_regardless_of_key_order() -> None:
+    """Same information, different key order in the model's raw JSON, must
+    normalize to the IDENTICAL string — sort_keys=True, matching
+    `_stringify_and_truncate`'s existing convention in this same class."""
+    registry = _registry_with(FakeTool("web_search", "Search the web."))
+    llm = FakeLLM([
+        json.dumps({"action_type": "tool", "tool_name": "web_search", "tool_input": {"b": 2, "a": 1}}),
+        json.dumps({"action_type": "tool", "tool_name": "web_search", "tool_input": {"a": 1, "b": 2}}),
+    ])
+    decision_maker = LLMDecisionMaker(llm_client=llm, tool_registry=registry)
+
+    first = decision_maker.decide(AgentState(user_input="hello"))
+    second = decision_maker.decide(AgentState(user_input="hello"))
+
+    assert first.tool_input == second.tool_input
+
+
+@pytest.mark.parametrize("bad_input", [123, 45.6, True])
+def test_non_dict_non_list_non_string_tool_input_still_raises(bad_input: object) -> None:
+    """Scope guard: this milestone widens acceptance for dict/list ONLY.
+    A bare number or boolean is a different, undiagnosed shape and must
+    still be rejected exactly as before."""
+    registry = _registry_with(FakeTool("web_search", "Search the web."))
+    llm = FakeLLM([json.dumps({"action_type": "tool", "tool_name": "web_search", "tool_input": bad_input})])
+    decision_maker = LLMDecisionMaker(llm_client=llm, tool_registry=registry)
+
+    with pytest.raises(DecisionParseError):
+        decision_maker.decide(AgentState(user_input="hello"))
+
+
+def test_empty_dict_tool_input_normalizes_to_the_empty_json_object_string() -> None:
+    registry = _registry_with(FakeTool("web_search", "Search the web."))
+    llm = FakeLLM([json.dumps({"action_type": "tool", "tool_name": "web_search", "tool_input": {}})])
+    decision_maker = LLMDecisionMaker(llm_client=llm, tool_registry=registry)
+
+    decision = decision_maker.decide(AgentState(user_input="hello"))
+
+    assert decision.tool_input == "{}"
+
+
+def test_empty_list_tool_input_normalizes_to_the_empty_json_array_string() -> None:
+    registry = _registry_with(FakeTool("web_search", "Search the web."))
+    llm = FakeLLM([json.dumps({"action_type": "tool", "tool_name": "web_search", "tool_input": []})])
+    decision_maker = LLMDecisionMaker(llm_client=llm, tool_registry=registry)
+
+    decision = decision_maker.decide(AgentState(user_input="hello"))
+
+    assert decision.tool_input == "[]"
+
+
+# ---------------------------------------------------------------------------
 # 9. Tool metadata is dynamically included from ToolRegistry.
 # ---------------------------------------------------------------------------
 

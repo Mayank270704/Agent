@@ -1,0 +1,17 @@
+# Optional dependencies for Milestone 22's local intent classifier
+# (app/ml_router/).
+#
+# Deliberately NOT in requirements.txt, matching requirements-embeddings.txt's
+# established pattern for this codebase: nothing in the deployed application
+# imports app/ml_router/ (see that package's __init__.py for the full
+# non-integration boundary), so the production agent needs neither
+# scikit-learn nor joblib. Installing this is opt-in, for training,
+# evaluating, or testing the classifier.
+#
+#     pip install -r requirements-ml-router.txt
+#
+# Fully local and offline: no API key is read, no network call is made,
+# training and inference both run entirely on this machine.
+
+scikit-learn>=1.4.0
+joblib>=1.3.0

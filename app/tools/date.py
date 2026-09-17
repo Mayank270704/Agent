@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 
-from app.tools.base import ToolResult
+from app.tools.base import RiskLevel, ToolCapability, ToolResult
 
 
 class DateTool:
@@ -11,6 +11,12 @@ class DateTool:
     description = "Determines the weekday and calendar details for a specified date."
     input_schema: dict[str, str] = {"date": "string"}
     output_description = "A dict with the parsed date, weekday, day, month, and year."
+    # Milestone 18: pure local computation over caller-supplied text — no
+    # network call, no mutation of any application or filesystem state.
+    # Lowest available capability/risk tier; never needs confirmation.
+    capability = ToolCapability.READ
+    risk_level = RiskLevel.LOW
+    requires_confirmation = False
 
     _DATE_FORMATS = (
         "%d %B %Y",

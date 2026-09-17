@@ -73,13 +73,18 @@ from __future__ import annotations
 import dataclasses
 import logging
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Protocol, Sequence, runtime_checkable
 
 from app.agent.embeddings import EmbeddingProvider
 from app.agent.memory_extraction import MemoryCandidate
-from app.agent.semantic_memory import SemanticMemoryRecord, SemanticMemoryStore
+from app.agent.semantic_memory import (
+    MemorySessionIsolationError,
+    SemanticMemoryRecord,
+    SemanticMemoryStore,
+)
 from app.agent.vector_index import VectorIndex
 
 logger = logging.getLogger(__name__)
@@ -214,6 +219,34 @@ class SemanticMemoryWriter:
     merging, supersession and contradiction resolution are all explicitly
     later milestones. Every record gets a fresh uuid4 `memory_id`, so
     identity collisions cannot occur.
+
+    --------------------------------------------------------------------
+    Concurrency (Step 16I)
+    --------------------------------------------------------------------
+    `write()`'s mutation workflow — duplicate lookup, embedding, store
+    insertion, index insertion, and retention eviction — is serialized by
+    a per-instance `threading.Lock`. This mirrors the same precedent a
+    real embedding provider already sets for its own model calls (16H) —
+    this module deliberately names no concrete provider (see this
+    package's dependency-direction rule: memory components depend only on
+    the EmbeddingProvider Protocol, never on a real implementation) — for
+    the identical reason: a FastAPI app runs its synchronous route
+    handlers in a threadpool, so
+    two concurrent requests for the SAME process-local store/index can
+    genuinely race here, and `_find_duplicate` -> `_persist` ->
+    `_enforce_retention` is a check-then-act sequence, not a single atomic
+    operation the GIL happens to protect. Without the lock, two concurrent
+    writes to one session could both fail to see each other's
+    not-yet-committed duplicate, or both observe a stale record count and
+    together evict more (or fewer) records than `max_records_per_session`
+    actually allows.
+
+    The lock is per INSTANCE, not global — two writers over two different
+    stores never contend with each other, matching how the retriever and
+    embedding provider are scoped. Input validation (candidate shape,
+    session_id, source_event_ids) happens BEFORE the lock is acquired,
+    since it touches no shared state and holding the lock for it would
+    serialize work that was never actually contended.
     """
 
     def __init__(
@@ -258,6 +291,9 @@ class SemanticMemoryWriter:
         self.duplicate_threshold = float(duplicate_threshold)
         self.min_confidence = float(min_confidence)
         self.max_records_per_session = max_records_per_session
+        # Guards write()'s mutation workflow only — see the class
+        # docstring's Concurrency note (Step 16I).
+        self._lock = threading.Lock()
 
     def write(
         self,
@@ -270,28 +306,34 @@ class SemanticMemoryWriter:
         if not isinstance(candidates, (list, tuple)):
             raise ValueError("candidates must be a list or tuple of MemoryCandidate.")
         _require_event_ids(source_event_ids)
-
-        written: list[SemanticMemoryRecord] = []
         for index, candidate in enumerate(candidates):
             if not isinstance(candidate, MemoryCandidate):
                 raise ValueError(f"candidates[{index}] must be a MemoryCandidate.")
 
-            reason = rejection_reason(candidate.content)
-            if reason is not None:
-                # Dropped, never rewritten -- see the module docstring.
-                logger.warning("Rejected semantic memory candidate (%s): %r", reason, candidate.content)
-                continue
+        # Everything above is pure input validation over the arguments this
+        # call received — it touches no shared state, so it runs before the
+        # lock is acquired (see the class docstring's Concurrency note).
+        # Everything below actually reads and mutates the shared store and
+        # index, so the whole batch is serialized as one unit.
+        written: list[SemanticMemoryRecord] = []
+        with self._lock:
+            for candidate in candidates:
+                reason = rejection_reason(candidate.content)
+                if reason is not None:
+                    # Dropped, never rewritten — see the module docstring.
+                    logger.warning("Rejected semantic memory candidate (%s): %r", reason, candidate.content)
+                    continue
 
-            if candidate.confidence < self.min_confidence:
-                logger.info(
-                    "Dropping low-confidence memory candidate (%.2f < %.2f): %r",
-                    candidate.confidence,
-                    self.min_confidence,
-                    candidate.content,
-                )
-                continue
+                if candidate.confidence < self.min_confidence:
+                    logger.info(
+                        "Dropping low-confidence memory candidate (%.2f < %.2f): %r",
+                        candidate.confidence,
+                        self.min_confidence,
+                        candidate.content,
+                    )
+                    continue
 
-            written.append(self._persist(normalized_session_id, candidate, tuple(source_event_ids)))
+                written.append(self._persist(normalized_session_id, candidate, tuple(source_event_ids)))
 
         return written
 
@@ -335,7 +377,10 @@ class SemanticMemoryWriter:
         if existing is None:
             raise ValueError(f"memory_id {superseded_memory_id!r} does not exist; nothing to supersede.")
         if existing.session_id.strip() != normalized_session_id:
-            raise ValueError(
+            # Step 16G: the same named type the read path raises, so the
+            # one security-critical failure class is identifiable wherever
+            # it occurs rather than only on retrieval.
+            raise MemorySessionIsolationError(
                 f"session isolation violation: memory {superseded_memory_id!r} belongs to session "
                 f"{existing.session_id!r}, not {normalized_session_id!r}."
             )
@@ -363,7 +408,7 @@ class SemanticMemoryWriter:
         module docstring for why this order, and for the non-atomicity it
         leaves."""
         # Embedded first so the vector is available for the duplicate
-        # check -- no second embedding call is needed, and a failure here
+        # check — no second embedding call is needed, and a failure here
         # still leaves nothing behind.
         vector = self.embedding_provider.embed(candidate.content)
 

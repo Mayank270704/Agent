@@ -44,6 +44,7 @@ from datetime import datetime
 from typing import Sequence
 
 from app.agent.memory_retriever import RetrievedMemory
+from app.agent.semantic_memory import MemorySessionIsolationError
 
 
 def _require_non_empty_str(field_name: str, value: object) -> None:
@@ -200,7 +201,20 @@ def build_memory_context(session_id: str, retrieved: Sequence[RetrievedMemory]) 
     belonging to `session_id` raises rather than being silently dropped —
     a record from the wrong session at this point means an upstream
     integrity bug, and quietly filtering it would hide the bug while
-    leaving the underlying leak path in place.
+    leaving the underlying leak path in place. Since Step 16G that raise
+    is a `MemorySessionIsolationError` (a ValueError subclass, so existing
+    handlers are unaffected), which exists so this specific failure can
+    never be mistaken for — or caught alongside — an ordinary
+    input-validation error.
+
+    Bounding is NOT done here, deliberately. Step 16G put the top-K and
+    character bounds in the retriever, upstream of this function, so that
+    everything dropped for size is dropped before it is ever projected
+    into agent-facing data; by the time a MemoryContext exists, it is
+    already within budget. Keeping this function a pure, total translation
+    — every input becomes exactly one output item — means "what did
+    retrieval decide to return?" has exactly one answer, in one place,
+    instead of two layers each quietly removing things.
     """
     _require_non_empty_str("session_id", session_id)
     normalized_session_id = session_id.strip()
@@ -215,7 +229,7 @@ def build_memory_context(session_id: str, retrieved: Sequence[RetrievedMemory]) 
 
         record = entry.memory
         if record.session_id.strip() != normalized_session_id:
-            raise ValueError(
+            raise MemorySessionIsolationError(
                 f"session isolation violation: retrieved memory {record.memory_id!r} belongs to session "
                 f"{record.session_id!r}, but the context is being built for session "
                 f"{normalized_session_id!r}."
