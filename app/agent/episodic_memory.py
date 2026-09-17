@@ -86,9 +86,24 @@ Reasoning:
   minimal (Part 6: "do not introduce a database or UUID service").
 If a future milestone needs id-addressable lookup (e.g. "fetch episode
 X"), that is the point to reconsider this — not before.
+
+--------------------------------------------------------------------------
+Milestone 23 — bounded session count
+--------------------------------------------------------------------------
+Per-session record retention was already bounded
+(`max_records_per_session`), but the NUMBER of distinct sessions this
+store retains was not. `max_sessions` closes that the identical way
+`InMemorySessionMemoryStore` does (app/agent/memory.py) — LRU eviction:
+`add`/`get_recent` both mark a session as most-recently-used, and once
+the session COUNT exceeds `max_sessions`, the least-recently-used
+session's entire record list is evicted. A `threading.Lock` protects the
+dict/list bookkeeping only — never held across anything but in-memory
+mutation.
 """
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import MappingProxyType
@@ -194,35 +209,55 @@ class InMemoryEpisodicMemory:
     - session_id is validated the same way as SessionMemoryStore's (Part
       10 consistency): a non-empty string once stripped; the stripped form
       is the dict key, so `"A"` and `" A "` refer to the same session.
+    - `max_sessions` bounds the NUMBER of distinct sessions retained, via
+      LRU eviction — see the module docstring's Milestone 23 section.
     """
 
-    def __init__(self, max_records_per_session: int = 100):
+    def __init__(self, max_records_per_session: int = 100, max_sessions: int = 1000):
         if max_records_per_session < 1:
             raise ValueError("max_records_per_session must be >= 1.")
+        if max_sessions < 1:
+            raise ValueError("max_sessions must be >= 1.")
         self._max_records_per_session = max_records_per_session
-        self._records: dict[str, list[EpisodicMemoryRecord]] = {}
+        self._max_sessions = max_sessions
+        self._records: OrderedDict[str, list[EpisodicMemoryRecord]] = OrderedDict()
+        self._lock = threading.Lock()
 
     def add(self, record: EpisodicMemoryRecord) -> None:
         if not isinstance(record, EpisodicMemoryRecord):
             raise ValueError("record must be an EpisodicMemoryRecord.")
         session_key = self._normalize(record.session_id)
-        session_records = self._records.setdefault(session_key, [])
-        session_records.append(record)
-        overflow = len(session_records) - self._max_records_per_session
-        if overflow > 0:
-            del session_records[:overflow]
+        with self._lock:
+            session_records = self._records.get(session_key)
+            if session_records is None:
+                session_records = []
+                self._records[session_key] = session_records
+            session_records.append(record)
+            overflow = len(session_records) - self._max_records_per_session
+            if overflow > 0:
+                del session_records[:overflow]
+
+            self._records.move_to_end(session_key)  # mark most-recently-used
+            if len(self._records) > self._max_sessions:
+                # Removes the OLDEST (least-recently-used) session's
+                # entire record list — never the one just written to.
+                self._records.popitem(last=False)
 
     def get_recent(self, session_id: str, limit: int = 10) -> list[EpisodicMemoryRecord]:
         session_key = self._normalize(session_id)
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
             raise ValueError("limit must be an integer >= 1.")
-        records = self._records.get(session_key, [])
-        most_recent = records[-limit:]
-        return list(reversed(most_recent))
+        with self._lock:
+            records = self._records.get(session_key, [])
+            if session_key in self._records:
+                self._records.move_to_end(session_key)
+            most_recent = records[-limit:]
+            return list(reversed(most_recent))
 
     def clear(self, session_id: str) -> None:
         session_key = self._normalize(session_id)
-        self._records.pop(session_key, None)
+        with self._lock:
+            self._records.pop(session_key, None)
 
     def _normalize(self, session_id: str) -> str:
         if not isinstance(session_id, str) or not session_id.strip():

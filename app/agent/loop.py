@@ -158,10 +158,44 @@ consulted. Emitting them unconditionally would fire a misleading
 `CORRECTION_DECLINED` on every ordinary failure in the (today, default)
 no-correction-policy production deployment, where there is no correction
 mechanism to have declined anything.
+
+Milestone 23 — global per-request deadline, OPT-IN and DEFAULT OFF: this
+loop gained an optional `deadline: float | None = None` constructor
+argument — an ABSOLUTE `time.monotonic()` cutoff, not a duration,
+computed once by the caller (app/services/chat.py, at the same request
+boundary `request_id` is already generated) and threaded through
+AgentOrchestrator unchanged. With no deadline configured (the default),
+behavior is byte-for-byte identical to before this milestone.
+
+Individual Ollama calls already have their own client-side timeout
+(app/models/llm.py, 60s) — that bounds ONE call. `deadline` bounds the
+WHOLE request: a pathological multi-iteration execution (a model that
+keeps requesting tools, each recovered by correction, forever approaching
+but never hitting max_iterations in unlucky orderings) could otherwise
+occupy a server thread far longer than any single call's timeout implies.
+
+This is a COOPERATIVE check, not preemption: this codebase's execution is
+synchronous, and there is no safe way to interrupt an arbitrary in-flight
+Python call (a running LLM request, a running tool) without dangerous
+thread-killing. The deadline is therefore checked at the exact same
+granularity `max_iterations` already is — once, at the top of the loop,
+before a new iteration starts — so the guarantee is precise and honestly
+scoped: no FURTHER iteration begins once the deadline has passed. An
+iteration already in flight when the deadline arrives still completes.
+
+Exceeding the deadline fails the state exactly like `max_iterations`
+exhaustion already does — the SAME terminal path, the SAME generic
+failure answer at the API layer (app/main.py's existing `_failure_answer`
+hardening), no new response shape. It is, like `max_iterations`,
+unconditionally NEVER offered to `self.correction_policy`: correction
+means "try again," which is precisely what a deadline exists to stop, so
+there is no `_apply_correction_or_fail` call at this site, matching how
+`max_iterations` itself has never been correctable either.
 """
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
@@ -278,6 +312,7 @@ class AgentLoop:
         tool_execution_gate: ToolExecutionGate | None = None,
         execution_context: ExecutionContext | None = None,
         event_emitter: EventEmitter | None = None,
+        deadline: float | None = None,
     ):
         if max_iterations <= 0:
             raise ValueError("max_iterations must be a positive integer.")
@@ -303,6 +338,13 @@ class AgentLoop:
         # Milestone 19 section. Never isinstance-checked, matching every
         # other optional collaborator here.
         self.event_emitter = event_emitter
+        # Milestone 23, opt-in, default None — see the module docstring's
+        # Milestone 23 section. An absolute `time.monotonic()` cutoff
+        # (NOT a duration), computed once by the caller (app/services/
+        # chat.py, at the true request boundary — the same place
+        # `request_id` is already generated) and checked at the top of
+        # every iteration below, alongside `max_iterations`.
+        self.deadline = deadline
 
     def run(self, state: AgentState) -> AgentState:
         """Advance `state` until it reaches a terminal status, mutating and
@@ -311,6 +353,22 @@ class AgentLoop:
             state.plan.start()
 
         while state.status == AgentStatus.RUNNING:
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                # Milestone 23: a cooperative check, deliberately at the
+                # SAME granularity as max_iterations below — between
+                # iterations, never mid-call. This codebase's execution is
+                # synchronous (a real Ollama/tool call cannot be safely
+                # preempted without dangerous thread-killing), so the
+                # guarantee this makes is "no FURTHER iteration starts
+                # once the deadline has passed," not "an in-flight call is
+                # interrupted." Terminal, exactly like max_iterations
+                # exhaustion — never offered to self.correction_policy:
+                # "try again" is precisely what a deadline exists to stop.
+                logger.error("execution.terminal category=deadline_exceeded step=%s", state.step)
+                state.fail("Request processing exceeded the maximum allowed time.")
+                self._fail_plan_if_running(state)
+                break
+
             if state.step >= self.max_iterations:
                 logger.error("execution.terminal category=max_iterations step=%s", state.step)
                 state.fail(f"Maximum iterations ({self.max_iterations}) reached without a final answer.")

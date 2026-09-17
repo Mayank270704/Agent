@@ -62,9 +62,38 @@ There is no module-level store instance anywhere in this file — a
 `SessionMemoryStore` must be explicitly constructed and owned by a caller
 (today: one `ChatService` instance), exactly like `ConversationMemory`
 itself.
+
+--------------------------------------------------------------------------
+Milestone 23 — bounded session count + atomic get-or-create
+--------------------------------------------------------------------------
+Each session's OWN message history was already bounded
+(`max_messages_per_session`), but the NUMBER of distinct session_ids the
+store retains was not — a long-running process accumulating one entry
+per session_id ever seen is unbounded memory growth. `max_sessions`
+bounds that too, via LRU: `get_memory` marks a session as most-recently-
+used on every access (new OR existing), and once the session COUNT
+exceeds `max_sessions`, the least-recently-used session is evicted —
+never an arbitrary or random choice, and never a session that was just
+touched. This preserves the existing rule that an EXPLICIT session
+persists across requests: it is only ever evicted once it has gone
+LEAST-recently-used among every other session concurrently held, which
+requires `max_sessions` distinct sessions to be more active more
+recently — normal usage of a bounded number of concurrent conversations
+never evicts anything.
+
+`get_memory`'s check-then-create was also not atomic under concurrent
+first requests for the same brand-new session_id (a real, if narrow,
+race under FastAPI's threadpool-executed sync handlers). A single
+`threading.Lock` around the check-then-create-and-touch section closes
+it; the lock is held only for in-memory dict/OrderedDict bookkeeping —
+never across an LLM call, a tool call, or any other user code, which all
+happen well outside this class entirely (see app/services/chat.py:
+`get_memory` returns before any of that begins).
 """
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from typing import Protocol, runtime_checkable
 
 
@@ -167,23 +196,44 @@ class InMemorySessionMemoryStore:
       ConversationMemory — a caller still holding a reference to the OLD
       memory object keeps seeing its old history, but it is no longer
       reachable through the store.
+    - `max_sessions` bounds the NUMBER of distinct sessions retained,
+      via LRU eviction — see the module docstring's Milestone 23 section.
     """
 
-    def __init__(self, max_messages_per_session: int = 20):
+    def __init__(self, max_messages_per_session: int = 20, max_sessions: int = 1000):
         if max_messages_per_session < 1:
             raise ValueError("max_messages_per_session must be >= 1.")
+        if max_sessions < 1:
+            raise ValueError("max_sessions must be >= 1.")
         self._max_messages_per_session = max_messages_per_session
-        self._sessions: dict[str, ConversationMemory] = {}
+        self._max_sessions = max_sessions
+        # OrderedDict, not dict: `move_to_end` gives an O(1) way to track
+        # recency for LRU eviction. Insertion order alone (a plain dict)
+        # cannot express "this EXISTING session was just used again".
+        self._sessions: OrderedDict[str, ConversationMemory] = OrderedDict()
+        self._lock = threading.Lock()
 
     def get_memory(self, session_id: str) -> ConversationMemory:
-        normalized = self._normalize(session_id)
-        if normalized not in self._sessions:
-            self._sessions[normalized] = InMemoryConversationMemory(max_messages=self._max_messages_per_session)
-        return self._sessions[normalized]
+        normalized = self._normalize(session_id)  # no shared state touched; safe outside the lock
+        with self._lock:
+            existing = self._sessions.get(normalized)
+            if existing is not None:
+                self._sessions.move_to_end(normalized)  # mark most-recently-used
+                return existing
+
+            memory = InMemoryConversationMemory(max_messages=self._max_messages_per_session)
+            self._sessions[normalized] = memory
+            if len(self._sessions) > self._max_sessions:
+                # popitem(last=False) removes the OLDEST (least-recently-
+                # used) entry — never the one just inserted, since a
+                # brand-new session is always the most-recently-used one.
+                self._sessions.popitem(last=False)
+            return memory
 
     def clear_session(self, session_id: str) -> None:
         normalized = self._normalize(session_id)
-        self._sessions.pop(normalized, None)
+        with self._lock:
+            self._sessions.pop(normalized, None)
 
     def _normalize(self, session_id: str) -> str:
         if not isinstance(session_id, str) or not session_id.strip():

@@ -140,6 +140,7 @@ entirely independent of which session is asking.
 """
 from __future__ import annotations
 
+import time
 import uuid
 
 from app.agent.episodic_memory import InMemoryEpisodicMemory
@@ -264,6 +265,15 @@ class ChatService:
         event_emitter = (
             EventEmitter(self.event_sink, request_id, session_id) if self.event_sink is not None else None
         )
+        # Milestone 23: an absolute time.monotonic() cutoff for this ONE
+        # request, computed once, right here, at the same true request
+        # boundary request_id already uses — never a duration recomputed
+        # per iteration (see app/agent/loop.py's module docstring for why
+        # it must be absolute). Always supplied, unconditionally, like
+        # tool_execution_gate/correction_policy above: there is no
+        # deployment-relevant reason to run a real request with no bound
+        # on its own total lifetime.
+        deadline = time.monotonic() + settings.request_timeout_seconds
         if session_id is None:
             # Legacy path (Step 13): no real session identity to tag an
             # episode with, so episodic recording stays off entirely.
@@ -278,6 +288,7 @@ class ChatService:
                 event_emitter=event_emitter,
                 correction_policy=self.correction_policy,
                 deterministic_temporal_routing=self.deterministic_temporal_routing,
+                deadline=deadline,
             )
         else:
             orchestrator = AgentOrchestrator(
@@ -294,6 +305,7 @@ class ChatService:
                 event_emitter=event_emitter,
                 correction_policy=self.correction_policy,
                 deterministic_temporal_routing=self.deterministic_temporal_routing,
+                deadline=deadline,
             )
         result = orchestrator.process(cleaned_message)
         return result.answer

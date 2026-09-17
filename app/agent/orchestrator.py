@@ -215,6 +215,7 @@ class AgentOrchestrator:
         execution_context: ExecutionContext | None = None,
         event_emitter: EventEmitter | None = None,
         deterministic_temporal_routing: bool = False,
+        deadline: float | None = None,
     ):
         self.llm = llm_client or LLMClient(
             provider=settings.llm_provider,
@@ -320,6 +321,7 @@ class AgentOrchestrator:
             tool_execution_gate=tool_execution_gate,
             execution_context=execution_context,
             event_emitter=self.event_emitter,
+            deadline=deadline,
         )
 
     def process(self, user_message: str) -> AgentResult:

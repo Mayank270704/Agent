@@ -128,5 +128,16 @@ class Settings:
     # byte-identical to every milestone before 19.
     telemetry_enabled: bool = field(default_factory=lambda: _parse_bool(os.getenv("TELEMETRY_ENABLED"), default=False))
 
+    # Milestone 23: bounds the TOTAL wall-clock lifetime of one /chat
+    # request (all decide/tool-execution iterations combined) — separate
+    # from, and not derived from, LLMClient's own per-call timeout (60s,
+    # app/models/llm.py). See app/agent/loop.py's `deadline` handling for
+    # why this is a cooperative check between iterations, not a hard
+    # cancellation. default_factory (not a plain default) for the same
+    # environment-read-timing reason as the semantic-memory fields above.
+    request_timeout_seconds: int = field(
+        default_factory=lambda: _parse_positive_int(os.getenv("REQUEST_TIMEOUT_SECONDS"), default=120)
+    )
+
 
 settings = Settings()
