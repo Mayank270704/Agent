@@ -2,3 +2,11 @@
 .venv/
 __pycache__/
 .pytest_cache/
+
+# Step 36: local SQLite persistence (conversation/session memory). Never
+# committed -- these are per-deployment runtime data, not source, exactly
+# like .env is per-deployment secret config.
+/data/
+*.db
+*.db-wal
+*.db-shm

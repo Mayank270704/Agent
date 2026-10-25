@@ -82,6 +82,9 @@ def _enabled_chat_service(llm: FakeLLM) -> ChatService:
         model_name="fake/model",
         device="cpu",
         max_records_per_session=200,
+        min_similarity=-1.0,
+        memory_backend="memory",
+        sqlite_db_path="unused.db",
         llm_client=llm,
         provider_factory=_fake_provider_factory,
     )
@@ -257,6 +260,9 @@ def test_chat_service_and_a_bundles_extractor_share_one_llm_client() -> None:
         model_name="fake/model",
         device="cpu",
         max_records_per_session=200,
+        min_similarity=-1.0,
+        memory_backend="memory",
+        sqlite_db_path="unused.db",
         llm_client=llm,
         provider_factory=_fake_provider_factory,
     )
@@ -407,6 +413,9 @@ def test_a_provider_construction_failure_during_wiring_propagates_uncaught() -> 
             model_name="fake/model",
             device="cpu",
             max_records_per_session=200,
+            min_similarity=-1.0,
+            memory_backend="memory",
+            sqlite_db_path="unused.db",
             llm_client=FakeLLM(),
             provider_factory=failing_factory,
         )

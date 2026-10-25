@@ -52,6 +52,52 @@ logger = logging.getLogger(__name__)
 # prompt. A full defense is out of scope for this step.
 _MAX_OBSERVATION_DATA_CHARS = 2000
 
+# ---------------------------------------------------------------------------
+# Milestone 44.1 — web-search observation formatting (reliability hardening).
+#
+# A read-only diagnosis (same milestone) found that web_search's raw result
+# list, run through the generic JSON-stringify-and-truncate path above,
+# buries the two most load-bearing fields (title, url) inside deeply-escaped
+# JSON syntax (`\"title\": \"...\"`, `—` for an em dash, nested
+# braces/brackets), and applies ONE truncation cut across the whole
+# serialized list — so which result survives depends on byte position, not
+# relevance, and a cut can land mid-field. The diagnosis also confirmed
+# Tavily already returns genuinely relevant results and the pipeline CAN
+# ground a correct answer in them (a live replay with the same evidence
+# produced a correct answer) — this is about presentation, not retrieval or
+# routing, which stay untouched.
+#
+# `_format_web_search_data` below renders web_search's result list as
+# plain, labeled text ("Result N / Title / URL / Content") instead, with
+# these bounds, chosen deliberately rather than just raising the old limit:
+#
+# - `_MAX_WEB_RESULTS_FORMATTED = 5`: matches WebSearchTool's own
+#   `max_results=5` Tavily request (app/tools/web_search.py). A defensive
+#   cap here, independent of that — this function's own output bound never
+#   relies on the tool actually honoring its own limit.
+# - `_MAX_WEB_RESULT_CONTENT_CHARS = 500`: a PER-RESULT cap, not global.
+#   Measured against real Tavily output during the diagnosis, 500 characters
+#   comfortably holds a complete short problem statement/snippet (the real
+#   "Two Sum" problem text + examples measured ~550 characters) while
+#   bounding any single result from dominating the whole block.
+# - `_MAX_WEB_OBSERVATION_CHARS = 2400`: the TOTAL cap across all formatted
+#   results combined, applied by dropping whole TRAILING result blocks
+#   (highest-ranked first, since results are kept in the order `data` was
+#   supplied — Tavily's own relevance ranking) once the combined budget
+#   would be exceeded. Never cuts a KEPT result's title/URL, and never cuts
+#   a result's content a second time. Modestly above the old blanket 2000 —
+#   not a dramatic increase — because this flat, label-based format carries
+#   materially less JSON-escaping overhead per character than what it
+#   replaces, so the same budget fits more actual evidence, not just a
+#   bigger number.
+#
+# Deterministic with respect to the supplied result list: no randomness, no
+# network/clock dependency, same input always produces the same output.
+_WEB_SEARCH_TOOL_NAME = "web_search"
+_MAX_WEB_RESULTS_FORMATTED = 5
+_MAX_WEB_RESULT_CONTENT_CHARS = 500
+_MAX_WEB_OBSERVATION_CHARS = 2400
+
 
 class DecisionParseError(DecisionMakerError):
     """Raised when the model's raw output cannot be parsed into a valid
@@ -95,6 +141,7 @@ class LLMDecisionMaker:
         router: Router | None = None,
         event_emitter: EventEmitter | None = None,
         deterministic_temporal_routing: bool = False,
+        deterministic_web_search_routing: bool = False,
     ):
         self.llm = llm_client
         self.tools = tool_registry
@@ -107,6 +154,16 @@ class LLMDecisionMaker:
         # `_deterministic_temporal_decision` for exactly what it controls
         # and, just as importantly, what it does not.
         self.deterministic_temporal_routing = deterministic_temporal_routing
+        # Step 26: the identical opt-in pattern, one capability later, for
+        # the `web_search` counterpart to the temporal fix above — see
+        # `_deterministic_web_decision` for exactly what it controls. A
+        # SEPARATE flag from `deterministic_temporal_routing` on purpose:
+        # every other opt-in capability in this codebase (correction_
+        # policy, tool_execution_gate, event_sink, telemetry_enabled,
+        # semantic_memory_enabled) is independently switchable, and
+        # collapsing two unrelated deterministic routes into one flag
+        # would make it impossible to enable/test/disable them separately.
+        self.deterministic_web_search_routing = deterministic_web_search_routing
         # Milestone 19, opt-in, default None — see app/agent/telemetry.py's
         # module docstring. With no emitter, `decide()` below is byte-for-
         # byte identical to before this milestone: no timer starts, no
@@ -115,6 +172,10 @@ class LLMDecisionMaker:
 
     def decide(self, state: AgentState) -> AgentDecision:
         deterministic = self._deterministic_temporal_decision(state)
+        if deterministic is not None:
+            return deterministic
+
+        deterministic = self._deterministic_web_decision(state)
         if deterministic is not None:
             return deterministic
 
@@ -221,6 +282,59 @@ class LLMDecisionMaker:
             return None
 
         logger.info("decision.deterministic_temporal tool=%s", tool_name)
+        return AgentDecision.tool(tool_name, tool_input)
+
+    # -- Deterministic web-search-command routing (Step 26) ------------------
+
+    def _deterministic_web_decision(self, state: AgentState) -> AgentDecision | None:
+        """Return an `AgentDecision` for the narrow set of requests that are
+        an explicit, imperative web-search COMMAND naming "web"/"online"/
+        "internet" ("search the web for X", "look up X online") — or
+        `None` to leave the decision to the LLM, exactly like
+        `_deterministic_temporal_decision` above, and built on the
+        identical reasoning:
+
+        The capability assessment that justified deterministic temporal
+        routing (llama3.2:3b missing `time` calls even with an advisory
+        hint active) generalizes here: `_format_hint` already renders an
+        advisory ROUTING HINT for web intent (Router.classify_hint /
+        RoutingHint.TOOL_LIKELY, Step 8C) on every request that reaches
+        this method, yet the model can, and in practice sometimes does,
+        still return FINAL for a request that explicitly told it to
+        search. An explicit command is not a case where the model's
+        judgment is needed — the user already made the decision; the
+        model's job was only to notice they made it.
+
+        Checked AFTER `_deterministic_temporal_decision` (never before): if
+        a request already matched the narrower, longer-tested temporal
+        route, this method does not run at all — see `decide()`. This
+        means an adversarial phrase matching both ("search the web for
+        what time is it") resolves exactly as it already did before this
+        method existed, not differently.
+
+        Same three guards as the temporal path, in the same order and for
+        the same reasons (see `_deterministic_temporal_decision`'s
+        docstring): opt-in flag, the tool must actually be registered in
+        THIS deployment, and the tool must not already have been attempted
+        this execution (no privileged deterministic retry — a failed or
+        denied deterministic web-search call re-enters the normal LLM path
+        on the next iteration, carrying whatever correction feedback
+        Milestone 17 produced, exactly like the temporal path).
+        """
+        if not self.deterministic_web_search_routing:
+            return None
+
+        selection = self.router.deterministic_web_search_route(state.user_input)
+        if selection is None:
+            return None
+
+        tool_name, tool_input = selection
+        if not self.tools.has(tool_name):
+            return None
+        if any(call.tool_name == tool_name for call in state.tool_calls):
+            return None
+
+        logger.info("decision.deterministic_web_search tool=%s", tool_name)
         return AgentDecision.tool(tool_name, tool_input)
 
     # -- Prompt construction -------------------------------------------------
@@ -491,7 +605,11 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
                     "step": observation.step,
                     "tool_name": observation.tool_name,
                     "success": observation.success,
-                    "data": self._stringify_and_truncate(observation.data),
+                    "data": (
+                        self._format_web_search_data(observation.data)
+                        if observation.tool_name == _WEB_SEARCH_TOOL_NAME
+                        else self._stringify_and_truncate(observation.data)
+                    ),
                     "error": self._stringify_and_truncate(observation.error),
                 }
                 for observation in state.observations
@@ -510,6 +628,72 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
         if len(text) > _MAX_OBSERVATION_DATA_CHARS:
             return text[:_MAX_OBSERVATION_DATA_CHARS] + "...[truncated]"
         return text
+
+    def _format_web_search_data(self, data: object) -> str | None:
+        """Render a web_search observation's result list as compact,
+        labeled, minimally-escaped text instead of a nested JSON blob — see
+        the module-level comment above `_WEB_SEARCH_TOOL_NAME` for why, and
+        for the exact bounds applied here.
+
+        Only handles the shape a web_search observation's `data` actually
+        has: a non-empty list (of result dicts — `WebSearchTool`'s real
+        shape — or, defensively, plain strings). Anything else (`None`, an
+        empty list, a bare string) falls back to the existing generic
+        `_stringify_and_truncate` path completely unchanged, so every
+        pre-existing truncation/None-handling behavior for a non-list
+        `data` is preserved exactly, byte for byte.
+        """
+        if not isinstance(data, list) or not data:
+            return self._stringify_and_truncate(data)
+
+        results = data[:_MAX_WEB_RESULTS_FORMATTED]
+        omitted = len(data) - len(results)
+
+        blocks: list[str] = []
+        for index, item in enumerate(results, start=1):
+            if isinstance(item, dict):
+                lines = [f"Result {index}"]
+                title = item.get("title")
+                if title:
+                    lines.append(f"Title: {title}")
+                url = item.get("url")
+                if url:
+                    lines.append(f"URL: {url}")
+                content = item.get("content")
+                content_text = str(content).strip() if content else ""
+            else:
+                # Not WebSearchTool's real shape, but handled defensively
+                # (e.g. a test or future caller constructing an observation
+                # with plain-string results) -- labeled the same way, with
+                # no title/URL to show.
+                lines = [f"Result {index}"]
+                content_text = str(item).strip()
+
+            if len(content_text) > _MAX_WEB_RESULT_CONTENT_CHARS:
+                content_text = content_text[:_MAX_WEB_RESULT_CONTENT_CHARS] + "...[content truncated]"
+            lines.append(f"Content:\n{content_text}" if content_text else "Content: (none)")
+            blocks.append("\n".join(lines))
+
+        # Total bound: keep whole result blocks, highest-ranked (i.e.
+        # earliest in `data`) first, dropping entire trailing blocks once
+        # the combined budget would be exceeded -- never cutting a KEPT
+        # block's title/URL, and never cutting a block's content a second
+        # time (that already happened above, per-result).
+        header = "WEB SEARCH RESULTS\n\n"
+        kept: list[str] = []
+        used = len(header)
+        for block in blocks:
+            addition = block + "\n\n"
+            if kept and used + len(addition) > _MAX_WEB_OBSERVATION_CHARS:
+                omitted += len(blocks) - len(kept)
+                break
+            kept.append(addition)
+            used += len(addition)
+
+        rendered = header + "".join(kept).rstrip()
+        if omitted:
+            rendered += f"\n\n[+{omitted} more result(s) omitted for length]"
+        return rendered
 
     # -- Output parsing / validation ------------------------------------------
 

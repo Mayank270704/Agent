@@ -57,6 +57,112 @@ def _parse_positive_int(value: str | None, *, default: int) -> int:
         ) from exc
 
 
+def _parse_float(value: str | None, *, default: float) -> float:
+    """Parse an environment variable string as a float (Step 33).
+
+    Identical discipline to `_parse_positive_int` just above, for the
+    identical reason: unset/blank -> `default` silently (the normal case
+    for every deployment that does not override this setting); set but not
+    a valid number -> raises `ValueError` at `Settings()` construction
+    (process startup), never silently falling back and hiding a deployment
+    typo behind behavior that looks like it worked. Range validation (e.g.
+    "must be within [-1.0, 1.0]") is deliberately NOT done here, matching
+    `_parse_positive_int`'s own reasoning — that is
+    `SemanticMemoryRetriever`'s constructor's job, and it only runs when
+    semantic memory is enabled.
+    """
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return float(value.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid float configuration value {value!r}; expected a number."
+        ) from exc
+
+
+def _parse_optional_float(value: str | None) -> float | None:
+    """Parse an optional environment variable string as a float, or `None`
+    if unset/blank (Milestone 44.1).
+
+    Unlike `_parse_float` above, there is no numeric default to fall back
+    to — "unset" and "explicitly leave Ollama's own default sampling
+    behavior alone" are the same state here (see `LLMClient` in
+    app/models/llm.py: `None` means no `temperature` is sent in the
+    request at all, which is byte-identical to every request before this
+    setting existed). Set but not a valid number -> raises `ValueError` at
+    `Settings()` construction, matching every other `_parse_*` helper's
+    loud-failure discipline — a configuration typo must never be silently
+    reinterpreted as "feature stays off."
+    """
+    if value is None or value.strip() == "":
+        return None
+    try:
+        return float(value.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid float configuration value {value!r}; expected a number."
+        ) from exc
+
+
+def _parse_optional_int(value: str | None) -> int | None:
+    """Parse an optional environment variable string as an integer, or
+    `None` if unset/blank (Milestone 44.1) — identical reasoning to
+    `_parse_optional_float` above, for `OLLAMA_SEED`: `None` means no
+    `seed` is sent, byte-identical to every request before this setting
+    existed."""
+    if value is None or value.strip() == "":
+        return None
+    try:
+        return int(value.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"invalid integer configuration value {value!r}; expected a whole number."
+        ) from exc
+
+
+def _parse_cors_origins(value: str | None, *, default: str) -> tuple[str, ...]:
+    """Parse CORS_ALLOWED_ORIGINS (Milestone 42): a comma-separated list of
+    allowed origins. Unset/blank -> `default` -- the local Next.js dev
+    frontend's own default origin (`npm run dev`, port 3000; both the
+    `localhost` and `127.0.0.1` forms, since browsers treat them as
+    different origins for CORS purposes). This is deliberately NOT a
+    wildcard (`allow_origins=["*"]`): Milestone 41 found no frontend
+    origin was known yet and correctly deferred CORS entirely; Milestone
+    42 is what makes one concrete and known, so the default can finally
+    name it explicitly instead of guessing or opening the API to every
+    origin. A deployed frontend's real origin is added via this same env
+    var, never by widening the default.
+    """
+    raw = value if value is not None and value.strip() != "" else default
+    return tuple(origin.strip() for origin in raw.split(",") if origin.strip())
+
+
+_VALID_MEMORY_BACKENDS = {"memory", "sqlite"}
+
+
+def _parse_memory_backend(value: str | None, *, default: str) -> str:
+    """Parse MEMORY_BACKEND (Step 36): unset/blank -> `default`
+    ("memory"), silently — the normal case for every deployment that does
+    not opt in to persistence. Set but not one of the known backend names
+    -> raises `ValueError` immediately, at `Settings()` construction,
+    matching every other `_parse_*` helper's rule: a configuration typo
+    must never be silently reinterpreted as "feature stays off" or
+    "feature uses some other backend" — it must fail loudly instead,
+    exactly like `_parse_positive_int`/`_parse_float` already do for a
+    malformed number. In particular, this means an unavailable/misspelled
+    SQLite backend is never silently downgraded to the in-memory one.
+    """
+    if value is None or value.strip() == "":
+        return default
+    normalized = value.strip().lower()
+    if normalized not in _VALID_MEMORY_BACKENDS:
+        raise ValueError(
+            f"invalid MEMORY_BACKEND {value!r}; expected one of {sorted(_VALID_MEMORY_BACKENDS)}."
+        )
+    return normalized
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = os.getenv("APP_NAME", "Chatbot API")
@@ -117,6 +223,55 @@ class Settings:
             os.getenv("SEMANTIC_MEMORY_MAX_RECORDS_PER_SESSION"), default=200
         )
     )
+    # Step 33 — SemanticMemoryRetriever's relevance floor. The retriever's
+    # OWN class default (app/agent/memory_retriever.py) is -1.0 — a true
+    # no-op over cosine similarity's full [-1.0, 1.0] range, deliberately
+    # chosen in 16G because the only provider that existed then
+    # (DeterministicEmbeddingProvider) produces similarities with no
+    # semantic meaning, so no non-zero floor could be honestly calibrated.
+    # That reasoning no longer holds once a REAL provider (all-MiniLM-L6-v2,
+    # 16H) is in use: an uncalibrated floor at activation time meant
+    # "unrelated queries do not retrieve" was NOT actually true of the
+    # wiring, only of the retriever class in isolation — a session with
+    # fewer than top_k stored memories would surface its least-bad match
+    # regardless of how irrelevant it was. 0.3 is not a guess: a direct
+    # measurement on this exact model (see tests/test_semantic_memory_
+    # evaluation.py) found unrelated-query similarities of 0.013-0.075
+    # against a stored fact, and semantically-related-but-differently-
+    # worded queries at 0.338-0.645 — 0.3 sits in the middle of that
+    # measured gap, matching related queries and rejecting unrelated ones
+    # in that evaluation. Like every embedding-dependent constant in this
+    # codebase (DEFAULT_DUPLICATE_THRESHOLD, DEFAULT_MIN_CONFIDENCE), this
+    # MUST be recalibrated if the embedding model is ever changed.
+    semantic_memory_min_similarity: float = field(
+        default_factory=lambda: _parse_float(os.getenv("SEMANTIC_MEMORY_MIN_SIMILARITY"), default=0.3)
+    )
+
+    # ----------------------------------------------------------------
+    # Step 36 — conversation/session persistence backend selection.
+    #
+    # default_factory for the identical reason as the Step 16I fields
+    # above: a plain default would be baked in at module-import time and
+    # never observe a later `monkeypatch.setenv(...)` in tests, nor a
+    # changed environment in a long-lived process.
+    # ----------------------------------------------------------------
+
+    # Default "memory": app/main.py constructs an InMemorySessionMemoryStore,
+    # byte-identical to every milestone before 36. "sqlite" selects
+    # SQLiteSessionMemoryStore instead (app/persistence/sqlite_memory.py) --
+    # no other value is accepted (see _parse_memory_backend above).
+    memory_backend: str = field(
+        default_factory=lambda: _parse_memory_backend(os.getenv("MEMORY_BACKEND"), default="memory")
+    )
+    # Only read/used when memory_backend == "sqlite". A plain path string,
+    # not validated here -- app/persistence/db.connect() rejects a blank
+    # path and creates the parent directory as needed; range/format
+    # validation beyond "non-empty" belongs to that call, which only
+    # happens when the sqlite backend is actually selected (identical
+    # division of responsibility to embedding_device above).
+    sqlite_db_path: str = field(
+        default_factory=lambda: os.getenv("SQLITE_DB_PATH", str(BASE_DIR / "data" / "conversations.db"))
+    )
 
     app_port: int = int(os.getenv("APP_PORT", "8000"))
     log_level: str = os.getenv("LOG_LEVEL", "info")
@@ -138,6 +293,40 @@ class Settings:
     request_timeout_seconds: int = field(
         default_factory=lambda: _parse_positive_int(os.getenv("REQUEST_TIMEOUT_SECONDS"), default=120)
     )
+
+    # Milestone 42 — the minimum backend change the frontend milestone
+    # needs: which browser origins may call this API cross-origin. Default
+    # names the local Next.js dev frontend (frontend/, `npm run dev`, port
+    # 3000) explicitly — never a wildcard. default_factory for the same
+    # environment-read-timing reason as every field above.
+    cors_allowed_origins: tuple[str, ...] = field(
+        default_factory=lambda: _parse_cors_origins(
+            os.getenv("CORS_ALLOWED_ORIGINS"),
+            default="http://localhost:3000,http://127.0.0.1:3000",
+        )
+    )
+
+    # Milestone 44.1 — optional Ollama generation sampling configuration.
+    # Both default to `None` (unset): when unset, `LLMClient` sends the
+    # exact same request payload as every milestone before this one (no
+    # `options` field at all) — an existing deployment's behavior is
+    # byte-identical unless an operator explicitly opts in. This is the
+    # SAME shared LLMClient instance used for every LLM call in this
+    # codebase (decisions, plan generation, memory extraction — see
+    # app/main.py's composition root), so a configured value applies
+    # uniformly everywhere, never selectively to just one call site.
+    # `OLLAMA_TEMPERATURE` lowers sampling randomness (more literal,
+    # less creative output) — plausibly useful for this codebase's
+    # JSON-mode decisions and structured extraction, but NOT flipped on
+    # by default here: one diagnostic replay is evidence this capability
+    # is worth having, not evidence of a specific value to standardize on.
+    # `OLLAMA_SEED` pins the random seed, making an identical prompt's
+    # output reproducible run-to-run — useful for debugging/reproducing a
+    # specific reported failure, not a correctness fix on its own.
+    ollama_temperature: float | None = field(
+        default_factory=lambda: _parse_optional_float(os.getenv("OLLAMA_TEMPERATURE"))
+    )
+    ollama_seed: int | None = field(default_factory=lambda: _parse_optional_int(os.getenv("OLLAMA_SEED")))
 
 
 settings = Settings()

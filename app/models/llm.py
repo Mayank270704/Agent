@@ -18,11 +18,23 @@ class LLMClient:
         model_name: str,
         api_key: str = "",
         base_url: str = "http://localhost:11434",
+        temperature: float | None = None,
+        seed: int | None = None,
     ):
         self.provider = provider.lower()
         self.model_name = model_name
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        # Milestone 44.1: optional Ollama sampling configuration (see
+        # app/config.py's `ollama_temperature`/`ollama_seed`). Both default
+        # to `None`, in which case `_generate_with_ollama` sends no
+        # `options` field at all — byte-identical to every request before
+        # this milestone. Currently wired up for the Ollama provider only,
+        # matching `json_mode`'s existing precedent just below (the OpenAI
+        # Responses API path is left untouched, for the same reason: no
+        # verified real account to confirm parameter shapes against).
+        self.temperature = temperature
+        self.seed = seed
 
         if self.provider == "openai":
             if not api_key or not api_key.strip():
@@ -59,6 +71,18 @@ class LLMClient:
         }
         if json_mode:
             payload["format"] = "json"
+
+        # Milestone 44.1: only added when explicitly configured (see
+        # __init__) — when both are None (the default), no "options" key
+        # is sent at all, so the request is identical to every one before
+        # this milestone.
+        options: dict[str, object] = {}
+        if self.temperature is not None:
+            options["temperature"] = self.temperature
+        if self.seed is not None:
+            options["seed"] = self.seed
+        if options:
+            payload["options"] = options
 
         request = urllib.request.Request(
             f"{self.base_url}/api/chat",

@@ -691,6 +691,54 @@ def test_general_hint_adds_no_routing_hint_text() -> None:
     assert "ROUTING HINT" not in _prompt_of(llm)
 
 
+# ---------------------------------------------------------------------------
+# Step 27: the advisory hint's bare "search for"/"look up"/"look for" was
+# removed from Router's `_WEB_INTENT_PHRASES` (see app/agent/router.py) —
+# these tests close the loop end-to-end through the REAL, default-
+# constructed Router (not a FakeRouter double), proving the actual prompt
+# LLMDecisionMaker sends no longer contains the nudging "ROUTING HINT" line
+# for the exact ambiguous/local-context cases a real-model diagnostic
+# measured were being pushed toward an incorrect web_search call.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "look up to your role model",
+        "search for the bug in this function",
+        "search for the value in this array",
+        "look up the meaning of this variable",
+        "search for the answer in the text above",
+        "search for a job",
+        "Search for the error in this code: def foo(): retun 1",
+        "Look up the definition of this variable in my code above.",
+    ],
+)
+def test_step_27_ambiguous_local_context_requests_get_no_routing_hint(message: str) -> None:
+    llm = FakeLLM([json.dumps({"action_type": "final", "final_answer": "ok"})])
+    decision_maker = LLMDecisionMaker(llm_client=llm, tool_registry=ToolRegistry())  # real, default Router
+
+    decision_maker.decide(AgentState(user_input=message))
+
+    assert "ROUTING HINT" not in _prompt_of(llm)
+
+
+def test_step_27_explicit_web_phrase_and_recency_keyword_hints_are_unaffected() -> None:
+    """Regression guard: the Step 27 narrowing must not silence the
+    remaining, still-justified advisory signals."""
+    llm = FakeLLM([
+        json.dumps({"action_type": "final", "final_answer": "ok"}),
+        json.dumps({"action_type": "final", "final_answer": "ok"}),
+    ])
+    decision_maker = LLMDecisionMaker(llm_client=llm, tool_registry=ToolRegistry())
+
+    decision_maker.decide(AgentState(user_input="Search the web for information about RAG."))
+    decision_maker.decide(AgentState(user_input="What is the latest AI news?"))
+
+    assert "ROUTING HINT" in _prompt_of(llm, 0)
+    assert "ROUTING HINT" in _prompt_of(llm, 1)
+
+
 def test_a_custom_router_can_be_injected_and_is_used_for_the_hint() -> None:
     llm = FakeLLM([json.dumps({"action_type": "final", "final_answer": "ok"})])
     fake_router = FakeRouter(RoutingHint.TOOL_LIKELY)

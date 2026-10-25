@@ -101,6 +101,19 @@ def _decision_maker(llm, registry, **kwargs) -> LLMDecisionMaker:
         ("What day is it?", ("time", None)),
         ("What day is 25 December 2026?", ("date", "25 december 2026")),
         ("What weekday is 1 January 2027?", ("date", "1 january 2027")),
+        # Step 30 — additional unambiguous current-time phrasings, closing
+        # the Category B coverage gap the Step 29 end-to-end evaluation
+        # measured (44.4% task success; two of three natural phrasings
+        # fell through to unreliable LLM judgment).
+        ("What's the time?", ("time", None)),
+        ("What is the time?", ("time", None)),
+        ("what's the time", ("time", None)),
+        ("Can you tell me the current time?", ("time", None)),
+        ("Can you tell me what time it is?", ("time", None)),
+        # Already covered by the pre-existing "what time is it" substring
+        # match — verified here as an explicit regression guard, not a new
+        # pattern (Step 29's own case b1, which was already stable/correct).
+        ("What time is it right now?", ("time", None)),
     ],
 )
 def test_router_exposes_the_existing_deterministic_verdict(message: str, expected: tuple) -> None:
@@ -119,6 +132,26 @@ def test_router_exposes_the_existing_deterministic_verdict(message: str, expecte
         "How does Google Search work?",
         "",
         "   ",
+        # Step 30 — "time" referring to a scheduled/historical event or a
+        # DURATION, not the current time. These must never deterministically
+        # route to the local clock, no matter how much they resemble the
+        # new phrasings above at a glance.
+        "what time was the event",
+        "what time did the meeting start",
+        "what time does the store open",
+        "what time is the movie",
+        "what time will the flight arrive",
+        "what time was the historical event",
+        "How much time does it take to boil an egg?",
+        # Step 30 — the specific realistic collision this milestone's own
+        # design explicitly guarded against: short fragments like "the
+        # time"/"what is the time" embedded in a longer, unrelated
+        # question must not hijack it toward the local clock.
+        "What is the time complexity of this algorithm?",
+        "Can you tell me the current time complexity of this sort?",
+        "What is the time zone difference between London and Tokyo?",
+        "What is the time limit for this exam?",
+        "Can you tell me what time it is for the meeting tomorrow?",
     ],
 )
 def test_router_declines_everything_outside_the_deterministic_local_tool_class(message: str) -> None:
@@ -529,4 +562,129 @@ def test_production_non_temporal_request_still_consults_the_model(
     answer = main_module.chat_service.ask("What is a transformer in deep learning?")
 
     assert "transformer" in answer.lower()
+    assert len(llm.calls) == 1
+
+
+# ===========================================================================
+# Step 30 — new current-time phrasings, exercised through the FULL
+# decision-maker/loop/gate pipeline. Router-level positive/negative
+# coverage lives in the parametrized tests above (extended, not
+# duplicated); this block closes the Phase 4 checklist items that need
+# the full wiring: zero unnecessary LLM calls, ToolExecutionGate
+# authority, temporal precedence over the Step 26/28 web-search route,
+# and the disabled-flag fallback — reusing this file's own established
+# FakeLLM/RecordingTool/gate helpers.
+# ===========================================================================
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "What's the time?",
+        "What is the time?",
+        "Can you tell me the current time?",
+        "Can you tell me what time it is?",
+    ],
+)
+def test_new_time_phrasings_select_the_time_tool_without_consulting_the_llm(message: str) -> None:
+    llm = FakeLLM()  # any call raises
+    decision_maker = _decision_maker(llm, _registry(TimeTool(), DateTool()))
+
+    decision = decision_maker.decide(AgentState(user_input=message))
+
+    assert decision.action_type is ActionType.TOOL
+    assert decision.tool_name == "time"
+    assert decision.tool_input is None
+    assert llm.calls == []  # zero LLM calls for the deterministic decision itself
+
+
+def test_new_time_phrasing_reaches_the_tool_execution_gate() -> None:
+    tool = RecordingTool("time")
+    registry = _registry(tool)
+    gate = ToolExecutionGate(registry, AllowlistPermissionPolicy({"time"}))
+    llm = FakeLLM([_final_json("It is noon.")])  # only the FINAL turn is scripted
+    loop = AgentLoop(
+        decision_maker=_decision_maker(llm, registry), tool_registry=registry, tool_execution_gate=gate
+    )
+    state = AgentState(user_input="What's the time?")
+
+    loop.run(state)
+
+    assert state.status is AgentStatus.COMPLETED
+    assert tool.execute_count == 1
+
+
+def test_new_time_phrasing_denied_by_permission_policy_never_executes() -> None:
+    tool = RecordingTool("time")
+    gate = ToolExecutionGate(_registry(tool), AllowlistPermissionPolicy(frozenset()))
+
+    with pytest.raises(PermissionDeniedError):
+        gate.execute("time", None, ExecutionContext())
+
+    assert tool.execute_count == 0
+
+
+def test_new_time_phrasing_does_not_override_web_search_precedence() -> None:
+    """The Step 26/28 deterministic web-search-command route is checked
+    AFTER the temporal route in decide() — unchanged by Step 30. An
+    explicit web command containing one of the new bare phrases still
+    resolves to web_search, not time, because the temporal check's
+    whole-message anchor never matches embedded text in the first place
+    (see app/agent/router.py's Step 30 comment)."""
+    time_tool = RecordingTool("time")
+    web_tool = RecordingTool("web_search")
+    registry = _registry(time_tool, web_tool)
+    llm = FakeLLM()
+    decision_maker = LLMDecisionMaker(
+        llm_client=llm,
+        tool_registry=registry,
+        deterministic_temporal_routing=True,
+        deterministic_web_search_routing=True,
+    )
+
+    decision = decision_maker.decide(AgentState(user_input="search the web for what is the time"))
+
+    assert decision.tool_name == "web_search"
+    assert llm.calls == []
+
+
+def test_new_time_phrasing_falls_back_to_the_llm_when_the_flag_is_disabled() -> None:
+    llm = FakeLLM([_final_json("I already know the answer.")])
+    decision_maker = LLMDecisionMaker(
+        llm_client=llm, tool_registry=_registry(TimeTool(), DateTool())
+    )  # deterministic_temporal_routing left at its default: False
+
+    decision = decision_maker.decide(AgentState(user_input="What's the time?"))
+
+    assert decision.action_type is ActionType.FINAL  # exactly what the model chose
+    assert len(llm.calls) == 1
+
+
+def test_production_new_time_phrasing_routes_deterministically_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the REAL production chat_service — only the FINAL turn is
+    scripted, so if the deterministic path did not fire the FakeLLM would
+    be asked for a decision it does not have."""
+    llm = FakeLLM([_final_json("It is noon.")])
+    monkeypatch.setattr(main_module.chat_service, "llm", llm)
+
+    answer = main_module.chat_service.ask("Can you tell me the current time?")
+
+    assert answer == "It is noon."
+    assert len(llm.calls) == 1
+
+
+def test_production_technical_time_complexity_question_still_consults_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The realistic collision this milestone's design explicitly guarded
+    against, proven through the REAL production chat_service: a technical
+    question containing "the time" as a sub-phrase must still reach the
+    model, never the local clock."""
+    llm = FakeLLM([_final_json("It is O(n log n).")])
+    monkeypatch.setattr(main_module.chat_service, "llm", llm)
+
+    answer = main_module.chat_service.ask("What is the time complexity of merge sort?")
+
+    assert "O(n log n)" in answer
     assert len(llm.calls) == 1

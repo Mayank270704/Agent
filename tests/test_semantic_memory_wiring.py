@@ -47,6 +47,9 @@ def _build(**overrides):
         model_name="fake/model",
         device="cpu",
         max_records_per_session=200,
+        min_similarity=-1.0,
+        memory_backend="memory",
+        sqlite_db_path="unused.db",
         llm_client=FakeLLM(),
         provider_factory=_fake_provider_factory(),
     )
@@ -65,6 +68,9 @@ def test_disabled_returns_none() -> None:
             model_name="fake/model",
             device="cpu",
             max_records_per_session=200,
+            min_similarity=-1.0,
+            memory_backend="memory",
+            sqlite_db_path="unused.db",
             llm_client=FakeLLM(),
         )
         is None
@@ -83,6 +89,9 @@ def test_disabled_never_calls_the_provider_factory() -> None:
         model_name="fake/model",
         device="cpu",
         max_records_per_session=200,
+        min_similarity=-1.0,
+        memory_backend="memory",
+        sqlite_db_path="unused.db",
         llm_client=FakeLLM(),
         provider_factory=spy_factory,
     )
@@ -100,6 +109,9 @@ def test_disabled_does_not_import_the_ml_stack() -> None:
         model_name="fake/model",
         device="cpu",
         max_records_per_session=200,
+        min_similarity=-1.0,
+        memory_backend="memory",
+        sqlite_db_path="unused.db",
         llm_client=FakeLLM(),
         # provider_factory omitted -> uses the real LocalEmbeddingProvider default
     )
@@ -117,6 +129,9 @@ def test_enabled_must_be_a_real_bool(bad_enabled: object) -> None:
             model_name="fake/model",
             device="cpu",
             max_records_per_session=200,
+            min_similarity=-1.0,
+            memory_backend="memory",
+            sqlite_db_path="unused.db",
             llm_client=FakeLLM(),
             provider_factory=_fake_provider_factory(),
         )

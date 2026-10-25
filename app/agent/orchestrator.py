@@ -215,6 +215,7 @@ class AgentOrchestrator:
         execution_context: ExecutionContext | None = None,
         event_emitter: EventEmitter | None = None,
         deterministic_temporal_routing: bool = False,
+        deterministic_web_search_routing: bool = False,
         deadline: float | None = None,
     ):
         self.llm = llm_client or LLMClient(
@@ -238,15 +239,16 @@ class AgentOrchestrator:
         # (matching the same "extend, don't reach into a caller's object"
         # rule this class already follows for `tools`/`llm`).
         self.event_emitter = event_emitter
-        # `deterministic_temporal_routing` reaches a DEFAULT-constructed
-        # LLMDecisionMaker only, for the same reason `event_emitter` does:
-        # an explicitly injected `decision_maker` is left exactly as the
-        # caller built it.
+        # `deterministic_temporal_routing`/`deterministic_web_search_routing`
+        # reach a DEFAULT-constructed LLMDecisionMaker only, for the same
+        # reason `event_emitter` does: an explicitly injected `decision_maker`
+        # is left exactly as the caller built it.
         self.decision_maker = decision_maker or LLMDecisionMaker(
             llm_client=self.llm,
             tool_registry=self.tools,
             event_emitter=self.event_emitter,
             deterministic_temporal_routing=deterministic_temporal_routing,
+            deterministic_web_search_routing=deterministic_web_search_routing,
         )
         # Deliberately NOT defaulted like decision_maker is — see the module
         # docstring. None means "no plan generation," exactly like before

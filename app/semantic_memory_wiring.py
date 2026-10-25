@@ -118,9 +118,10 @@ from app.agent.local_embeddings import LocalEmbeddingProvider
 from app.agent.memory_extraction import LLMMemoryExtractor, MemoryExtractor
 from app.agent.memory_retriever import MemoryRetriever, SemanticMemoryRetriever
 from app.agent.memory_writer import MemoryWriter, SemanticMemoryWriter
-from app.agent.semantic_memory import InMemorySemanticMemory
-from app.agent.vector_index import InMemoryVectorIndex
+from app.agent.semantic_memory import InMemorySemanticMemory, SemanticMemoryStore
+from app.agent.vector_index import InMemoryVectorIndex, VectorIndex
 from app.models.llm import LLMClient
+from app.persistence.sqlite_semantic_memory import SQLiteSemanticMemory, SQLiteVectorIndex
 
 ProviderFactory = Callable[..., EmbeddingProvider]
 """A callable built with `model_name` and `device` keyword arguments,
@@ -163,7 +164,10 @@ def build_semantic_memory(
     model_name: str,
     device: str,
     max_records_per_session: int,
+    min_similarity: float,
     llm_client: LLMClient,
+    memory_backend: str,
+    sqlite_db_path: str,
     provider_factory: ProviderFactory = LocalEmbeddingProvider,
 ) -> SemanticMemoryBundle | None:
     """Assemble the semantic-memory stack, or decline to.
@@ -174,6 +178,14 @@ def build_semantic_memory(
     `Settings`, so the composition root's behavior is always a direct,
     readable function of configuration rather than of this function's own
     opinions.
+
+    `min_similarity` (Step 33) is passed straight through to the
+    constructed `SemanticMemoryRetriever` — see `app/config.py`'s
+    `semantic_memory_min_similarity` for why this wiring-level default
+    (0.3, calibrated against the real embedding model) differs from
+    `SemanticMemoryRetriever`'s own class-level default (-1.0, a true
+    no-op, still correct for any caller — e.g. tests — that constructs a
+    retriever directly rather than through this function).
 
     Returns `None` when `enabled` is `False` — never an "empty" or
     "no-op" bundle. `ChatService`'s memory collaborators are `... | None`
@@ -186,6 +198,18 @@ def build_semantic_memory(
     the function that activates REAL semantic embeddings, which is the
     entire point of Step 16I. It is called as
     `provider_factory(model_name=model_name, device=device)`.
+
+    `memory_backend`/`sqlite_db_path` (Step 38) select the store/index
+    backend — "memory" (InMemorySemanticMemory + InMemoryVectorIndex,
+    byte-identical to every milestone before 38) or "sqlite"
+    (SQLiteSemanticMemory + SQLiteVectorIndex, app/persistence/
+    sqlite_semantic_memory.py). This is the SAME setting Steps 36/37
+    already use for conversation/session/episodic memory — there is no
+    separate semantic-memory backend flag — so enabling MEMORY_BACKEND=
+    sqlite persists all five memory layers to the same database file.
+    `sqlite_db_path` is required even when `memory_backend == "memory"`
+    (where it goes unused), matching every other argument's "always
+    explicit" discipline in this function.
 
     Raises whatever the underlying constructors raise, unmodified:
     `EmbeddingModelLoadError` (or a test double's own exception) if the
@@ -204,15 +228,30 @@ def build_semantic_memory(
         # why that ordering is the whole point.
         return None
 
+    if not isinstance(memory_backend, str) or memory_backend not in {"memory", "sqlite"}:
+        raise ValueError(f"memory_backend must be 'memory' or 'sqlite', got {memory_backend!r}.")
+
     provider = provider_factory(model_name=model_name, device=device)
 
-    # Dimension is read FROM the constructed provider — never hard-coded
-    # (see the module docstring).
-    index = InMemoryVectorIndex(dimension=provider.dimension)
-
-    # Deliberately uncapped — SemanticMemoryWriter is the sole retention
-    # owner (see the module docstring).
-    store = InMemorySemanticMemory()
+    if memory_backend == "sqlite":
+        # Model identity: `LocalEmbeddingProvider` exposes `.model_name`
+        # (not part of the EmbeddingProvider Protocol — see
+        # app/persistence/sqlite_semantic_memory.py's module docstring);
+        # a provider without one (e.g. DeterministicEmbeddingProvider, used
+        # only in tests) is identified by its class name instead, which is
+        # still a stable, meaningful identity for mismatch detection.
+        embedding_model_name = getattr(provider, "model_name", type(provider).__name__)
+        index: VectorIndex = SQLiteVectorIndex(
+            db_path=sqlite_db_path, dimension=provider.dimension, embedding_model_name=embedding_model_name
+        )
+        # Deliberately uncapped — SemanticMemoryWriter is the sole retention
+        # owner (see the module docstring), unchanged by Step 38.
+        store: SemanticMemoryStore = SQLiteSemanticMemory(db_path=sqlite_db_path)
+    else:
+        # Dimension is read FROM the constructed provider — never
+        # hard-coded (see the module docstring).
+        index = InMemoryVectorIndex(dimension=provider.dimension)
+        store = InMemorySemanticMemory()
 
     # The writer and retriever share `store`, `provider`, and `index` by
     # construction here — this is the ONE place that decides it, and it is
@@ -223,7 +262,7 @@ def build_semantic_memory(
         index,
         max_records_per_session=max_records_per_session,
     )
-    retriever = SemanticMemoryRetriever(store, provider, index)
+    retriever = SemanticMemoryRetriever(store, provider, index, min_similarity=min_similarity)
     extractor = LLMMemoryExtractor(llm_client)
 
     return SemanticMemoryBundle(retriever=retriever, extractor=extractor, writer=writer)

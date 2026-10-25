@@ -38,19 +38,63 @@ decision; the hint can be, and sometimes is, ignored by the model.
 
 UPDATE (Step 8C): `classify_hint()` gained one small, explainable addition —
 a keyword/phrase check for explicit current/recency intent ("latest",
-"recent", "current") or an explicit search/look-up request ("search the
-web", "search for", "look up", "look for"), used only when the existing
-`_deterministic_temporal_check` found no match. This closes a measured gap
-(see the Step 8B baseline): phrases like "What is the latest AI news?" or
-"Search the web for information about RAG." previously fell through to
-GENERAL even though they clearly signal a need for external information.
-`_deterministic_temporal_check` and `decide()` themselves are UNCHANGED —
-only `classify_hint()`'s own web-intent layer is new. This is deliberately
-narrow (no bare "search", so "How does Google Search work?" still reads as
-a static question) rather than a general named-entity or topic classifier —
-see the module-level rationale for why Router still isn't wired into
-AgentOrchestrator even with this addition (this remains a controlled
-experiment, not a decision to keep or remove Router).
+"recent", "current") or an explicit search/look-up request (originally
+"search the web", "search for", "look up", "look for" — see the Step 27
+update below for why three of those four were later removed), used only
+when the existing `_deterministic_temporal_check` found no match. This
+closes a measured gap (see the Step 8B baseline): phrases like "What is
+the latest AI news?" or "Search the web for information about RAG."
+previously fell through to GENERAL even though they clearly signal a need
+for external information. `_deterministic_temporal_check` and `decide()`
+themselves are UNCHANGED — only `classify_hint()`'s own web-intent layer is
+new. This is deliberately narrow (no bare "search", so "How does Google
+Search work?" still reads as a static question) rather than a general
+named-entity or topic classifier — see the module-level rationale for why
+Router still isn't wired into AgentOrchestrator even with this addition
+(this remains a controlled experiment, not a decision to keep or remove
+Router).
+
+UPDATE (Step 26): `classify_hint()`'s web-intent layer above is advisory
+only — it adds a prompt hint, but the capability assessment measured that
+llama3.2:3b still frequently ignores it (the same class of under-calling
+Step 20's `deterministic_tool_route` fixed for time/date). `deterministic_
+web_search_route()` is the AUTHORITATIVE counterpart, added for the exact
+same reason and with the exact same discipline: it recognizes a
+deliberately NARROW subset of `_has_web_intent`'s territory — explicit,
+imperative search COMMANDS that ALSO name "web"/"internet"/"online"
+("search the web for X", "search online for X", "look up X online", "find
+X online"), never the broader recency-keyword signal ("latest", "recent",
+"current") that `_has_web_intent` also matches, and never a bare topical
+question. A recency keyword alone stays advisory-only (too many non-search
+readings — "current mood", "recent changes to my code" — to select a tool
+with certainty); an explicit command is a much stronger signal, but even
+"search for X"/"look up X" ALONE (no web/online/internet reference) was
+found, during this milestone's own adversarial testing, to false-positive
+on ordinary non-web requests ("search for the bug in this function", "look
+up to your role model") — so an explicit locality qualifier is required on
+every pattern, not merely an imperative verb. See `deterministic_web_
+search_route`'s own docstring for the exact pattern set, the negation
+guard, and the adversarial cases that shaped it.
+
+UPDATE (Step 27): Step 26 narrowed the AUTHORITATIVE route to exclude bare
+"search for X"/"look up X" but left `_has_web_intent`'s ADVISORY phrase set
+containing exactly those same bare phrases — an inconsistency: the same
+words Step 26 proved too ambiguous to select a tool WITH certainty were
+still nudging the model TOWARD that same wrong tool via the ROUTING HINT
+line `LLMDecisionMaker._format_hint` renders for `RoutingHint.TOOL_LIKELY`.
+A real-model diagnostic (with-hint vs. hint-disabled, 3 trials each, same
+9 ambiguous/local-context cases, same model, same temperature — the only
+variable changed was whether the hint fired) measured a 33% (9/27)
+unnecessary-`web_search` rate with the hint active on those cases, dropping
+to 0% (0/27) with it disabled. That isolates the phrase set itself, not
+model nondeterminism alone, as the dominant contributor. `_WEB_INTENT_
+PHRASES` below was narrowed to drop "search for"/"look up"/"look for",
+keeping only "search the web" — bringing the advisory hint's bare-verb
+handling into the same, already-proven-safer posture the deterministic
+route has used since Step 26. The bare recency KEYWORDS ("latest",
+"recent", "current") are unchanged and untouched by this update; they were
+not implicated by the diagnostic and remain a materially different signal
+(a topic being described as current, not an imperative verb).
 """
 from __future__ import annotations
 
@@ -138,8 +182,28 @@ class Router:
     # handful of explicit search/look-up phrases; "search" alone is excluded
     # on purpose so a static question like "How does Google Search work?"
     # doesn't false-positive.
+    #
+    # UPDATE (Step 27): "search for"/"look up"/"look for" were REMOVED from
+    # this list — they used to sit here as bare phrases, same as they still
+    # do NOT sit in `_WEB_SEARCH_COMMAND_PATTERNS` below (Step 26 already
+    # excluded them there for an identical reason). Leaving them here was an
+    # inconsistency: Step 26 proved bare "search for X"/"look up X" is too
+    # ambiguous to select a tool WITH certainty, but the identical bare
+    # phrases were still nudging the model TOWARD that same wrong tool via
+    # this advisory hint. A real-model diagnostic run for Step 27
+    # (with-hint vs. hint-disabled, 3 trials each, 9 cases: "look up to your
+    # role model," "search for the bug in this function," "search for a
+    # job," etc.) measured a 33% (9/27) unnecessary-web_search rate WITH
+    # this phrase set active on those exact cases, dropping to 0% (0/27)
+    # with the hint disabled — i.e. the SAME cases, same model, same
+    # temperature; only the hint changed. That isolates this phrase set,
+    # not model nondeterminism alone, as the dominant cause. "search the
+    # web" is kept: it is already covered by the (much narrower, qualifier-
+    # requiring) deterministic route below, so it is largely redundant here
+    # in production, but it remains a correct, unambiguous signal for any
+    # caller that uses `classify_hint()` on its own.
     _WEB_INTENT_KEYWORDS = ("latest", "recent", "current")
-    _WEB_INTENT_PHRASES = ("search the web", "search for", "look up", "look for")
+    _WEB_INTENT_PHRASES = ("search the web",)
 
     def classify_hint(self, user_message: str) -> RoutingHint:
         """Cheap, deterministic, LLM-free pre-filter producing a coarse,
@@ -208,6 +272,123 @@ class Router:
             return ("date", decision.search_query or None)
         return None
 
+    # Step 26 — authoritative web-search-COMMAND routing. Deliberately a
+    # much narrower set than `_WEB_INTENT_KEYWORDS`/`_WEB_INTENT_PHRASES`
+    # above (which stay advisory-only, unchanged): every pattern here
+    # requires BOTH an imperative search/look-up/find verb AND an explicit
+    # "web"/"internet"/"online" qualifier — never one without the other.
+    # Each pattern has exactly one capture group — the text to search for.
+    #
+    # This is narrower than the Step 26 design brief's own Category A list
+    # (which includes bare "search for ..."), and that narrowing is
+    # evidence-driven, not a judgment call made in the abstract: adversarial
+    # testing during this milestone (see tests/test_deterministic_web_
+    # search_routing.py) found that a bare, unqualified "search for X" /
+    # "look up X" — with no web/online/internet reference at all — false-
+    # positives on ordinary, non-web requests that merely happen to share
+    # the verb: "search for the bug in this function", "look up to your
+    # role model" (a different phrasal verb entirely), "search for a job".
+    # None of those should ever bypass the model's own judgment. Requiring
+    # an explicit web/online/internet qualifier keeps every remaining
+    # pattern true to its literal words: if the user says "the web" or
+    # "online", routing to `web_search` is never a misreading, regardless
+    # of how unusual the search subject is. Bare "search for"/"look up"
+    # remain covered by the EXISTING advisory hint (`_has_web_intent`,
+    # unchanged) — nudged, never auto-selected.
+    #
+    # Step 28: `\bfind\s+(.+?)\s+on\s+the\s+(?:web|internet)\b` was added
+    # below to close a coverage gap found during Step 27's evaluation —
+    # "find X on the internet"/"find X on the web" was falling through to
+    # the LLM even though "look up X on the web/internet" (the otherwise
+    # identical pattern, two lines up) was already covered. It is the exact
+    # same qualifier-required shape as every other pattern here, just for
+    # the "find" verb's "on the web/internet" phrasing instead of "online"
+    # — not a new class of match, only a missing symmetric case of an
+    # already-present one.
+    _WEB_SEARCH_COMMAND_PATTERNS = (
+        re.compile(r"\bsearch\s+(?:the\s+)?(?:web|internet)\s+for\s+(.+)"),
+        re.compile(r"\bsearch\s+online\s+for\s+(.+)"),
+        re.compile(r"\blook\s+up\s+(.+?)\s+online\b"),
+        re.compile(r"\blook\s+up\s+(.+?)\s+on\s+the\s+(?:web|internet)\b"),
+        re.compile(r"\bfind\s+online\s+(.+)"),
+        re.compile(r"\bfind\s+(.+?)\s+online\b"),
+        re.compile(r"\bfind\s+(.+?)\s+on\s+the\s+(?:web|internet)\b"),
+    )
+
+    # A message containing any of these anywhere is never routed
+    # deterministically — negated/hypothetical phrasing ("don't search the
+    # web for X", "no need to look up X") is exactly the ambiguity this
+    # narrow route must not paper over. It falls through to the ordinary
+    # LLM decision path instead, unchanged.
+    _WEB_SEARCH_NEGATION_MARKERS = (
+        "don't",
+        "do not",
+        "doesn't",
+        "won't",
+        "never",
+        "shouldn't",
+        "no need to",
+        "without searching",
+        "stop searching",
+    )
+
+    def deterministic_web_search_route(self, user_message: str) -> tuple[str, str] | None:
+        """Public, LLM-free accessor recognizing an explicit web-search
+        COMMAND with certainty — the `web_search` counterpart to
+        `deterministic_tool_route`'s time/date coverage above.
+
+        Returns `("web_search", "<extracted query text>")`, or `None` for
+        everything else: no command phrase matched (including a bare,
+        unqualified "search for X"/"look up X" with no "web"/"online"/
+        "internet" reference — see `_WEB_SEARCH_COMMAND_PATTERNS`'s own
+        comment for why that qualifier is required on every pattern), the
+        phrase matched but cleanup left no usable query text, or a negation
+        marker was present anywhere in the message. This method does not
+        call `_deterministic_temporal_check` itself —
+        precedence between the two deterministic routes is decided by the
+        one caller (`LLMDecisionMaker._deterministic_web_decision`, called
+        only after the temporal check already returned `None` — see that
+        module for why), not duplicated here.
+
+        Deliberately excluded, matching Category D of the Step 26 design:
+        a bare recency keyword ("What's the latest on X?"), a bare
+        current-information question ("What is the current price of
+        Bitcoin?"), and a historical/static question ("When was the Eiffel
+        Tower built?") all return `None` here — none of them are an
+        explicit instruction to search, so which tool (if any) should
+        answer them stays the LLM's judgment call, exactly as it already
+        is for the equivalent non-command cases in `deterministic_tool_
+        route`.
+        """
+        if user_message is None or not str(user_message).strip():
+            return None
+
+        normalized = re.sub(r"\s+", " ", str(user_message).strip().lower())
+
+        if any(marker in normalized for marker in self._WEB_SEARCH_NEGATION_MARKERS):
+            return None
+
+        for pattern in self._WEB_SEARCH_COMMAND_PATTERNS:
+            match = pattern.search(normalized)
+            if not match:
+                continue
+            query = self._clean_web_search_query(match.group(1))
+            if query:
+                return ("web_search", query)
+
+        return None
+
+    def _clean_web_search_query(self, raw_query: str) -> str | None:
+        """Strip a redundant trailing "online"/"on the web"/"on the
+        internet" qualifier (the command phrase already established that —
+        repeating it inside the search query itself would only dilute a
+        Tavily search) and surrounding punctuation/whitespace. Returns
+        `None` for a query that is empty after cleanup, e.g. "search for"
+        with no object at all."""
+        cleaned = re.sub(r"\s+(?:online|on the web|on the internet)\s*$", "", raw_query.strip())
+        cleaned = cleaned.strip(" ?!.,")
+        return cleaned or None
+
     def _has_web_intent(self, user_message: str) -> bool:
         """True for explicit current/recency wording or an explicit
         search/look-up request. Only called after the deterministic temporal
@@ -251,6 +432,17 @@ class Router:
                 route="web",
             )
 
+        # Step 44.2: "what is the current date" was removed from this
+        # substring-anywhere tuple -- it false-positived on "what is the
+        # current date format?" (substring-anywhere matching cannot tell a
+        # trailing qualifier like "format?" apart from nothing at all). It
+        # now lives in `unambiguous_current_time_phrases` below instead,
+        # which requires the WHOLE message to match (after stripping
+        # trailing punctuation) -- "what is the current date?" still
+        # routes; "what is the current date format?" correctly does not.
+        # No other entry here was found to have this problem against this
+        # milestone's evidence (see tests/test_router.py), so none of the
+        # others were moved.
         temporal_patterns = (
             "which year is this",
             "which year is it",
@@ -259,7 +451,6 @@ class Router:
             "what date is today",
             "what is today\'s date",
             "what day is it today",
-            "what is the current date",
             "what time is it",
             "what is the date right now",
             "what day is today",
@@ -275,6 +466,80 @@ class Router:
             return RouterDecision(
                 needs_web=False,
                 reason="This question asks for the current date, time, or year and depends on present temporal context.",
+                search_query="",
+                route="time",
+            )
+
+        # Step 30 — a small, evidence-bounded set of additional unambiguous
+        # CURRENT-TIME phrasings, found missing by the Step 29 end-to-end
+        # evaluation (Category B: "Can you tell me the current time?" and
+        # "What's the time?" both fell through to LLM judgment and were
+        # missed in the majority of trials, despite being exactly as
+        # unambiguous as the already-covered "What time is it?").
+        #
+        # Deliberately matched as the ENTIRE message (after stripping
+        # trailing punctuation only), NOT as a substring-anywhere check
+        # like `temporal_patterns` above: "what is the time" and "can you
+        # tell me the current time" are short, generic-sounding fragments
+        # that DO occur inside unrelated, realistic questions this exact
+        # deployment already fields as an assistant used for technical
+        # help — e.g. "What is the time complexity of this algorithm?" or
+        # "Can you tell me the current time complexity of this sort?" (see
+        # the Step 29 evaluation's own Category G — "search for"/"look
+        # up"/local-technical-context phrasing is a proven-real class of
+        # request here). A substring-anywhere match would silently
+        # misroute those to the local clock instead of answering the real
+        # question — exactly the "broad regex that routes every query
+        # containing 'time'" this milestone was told not to build.
+        # Requiring the phrase to be the WHOLE message (trailing "?"/"!"/
+        # "." aside) closes the Step 29 gap without that risk: a longer
+        # sentence built AROUND one of these phrases never matches.
+        #
+        # Step 44.2 — a read-only diagnosis of a live "today date" failure
+        # found this exact same gap on the DATE side: short, fragment-style
+        # date requests ("today date", "today's date", "current date",
+        # "date today") matched none of `temporal_patterns` above (that
+        # tuple requires a full question shape — "what is today's date",
+        # "what date is today", etc. — and is checked substring-anywhere,
+        # which these shorter fragments don't satisfy either way) and fell
+        # through to the ordinary LLM decision call, where the model
+        # sometimes answered from unrelated prior conversation context
+        # instead of the date (reproduced directly, including in a FRESH
+        # session with no prior context — a model-reliability gap once
+        # deterministic certainty is absent, not a memory-contamination
+        # bug). These resolve to the SAME `route="time"` bucket as
+        # "what is today's date?" already does (TimeTool, not DateTool —
+        # `date`/DateTool stays reserved for a weekday calculation against
+        # an explicitly specified date, matching every other phrasing in
+        # this bucket). "time now" is added for the same reason, alongside
+        # the existing current-time fragments it already sits next to.
+        #
+        # Using the SAME whole-message discipline as the block above (not
+        # added to the substring-anywhere `temporal_patterns` tuple) is
+        # deliberately load-bearing here, not incidental: "current date" as
+        # a substring-anywhere match would wrongly fire on "what is the
+        # current date format?" or "what's the current date for the
+        # meeting?" — exactly the "broad keyword matching" this fix must
+        # not become. As a whole-message match, a longer sentence built
+        # around one of these fragments (including "i asked today date",
+        # which contains "today date" but is not equal to it) never
+        # matches, by construction.
+        unambiguous_current_time_phrases = (
+            "what's the time",
+            "what is the time",
+            "can you tell me the current time",
+            "can you tell me what time it is",
+            "time now",
+            "today date",
+            "today's date",
+            "current date",
+            "date today",
+            "what is the current date",
+        )
+        if normalized.rstrip("?!.").strip() in unambiguous_current_time_phrases:
+            return RouterDecision(
+                needs_web=False,
+                reason="This question asks for the current time and depends on present temporal context.",
                 search_query="",
                 route="time",
             )

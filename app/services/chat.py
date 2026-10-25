@@ -143,8 +143,13 @@ from __future__ import annotations
 import time
 import uuid
 
-from app.agent.episodic_memory import InMemoryEpisodicMemory
-from app.agent.memory import ConversationMemory, InMemoryConversationMemory, InMemorySessionMemoryStore
+from app.agent.episodic_memory import EpisodicMemory, InMemoryEpisodicMemory
+from app.agent.memory import (
+    ConversationMemory,
+    InMemoryConversationMemory,
+    InMemorySessionMemoryStore,
+    SessionMemoryStore,
+)
 from app.agent.memory_extraction import MemoryExtractor
 from app.agent.memory_retriever import MemoryRetriever
 from app.agent.memory_writer import MemoryWriter
@@ -162,6 +167,8 @@ class ChatService:
     def __init__(
         self,
         llm_client: LLMClient | None = None,
+        session_store: SessionMemoryStore | None = None,
+        episodic_memory: EpisodicMemory | None = None,
         memory_retriever: MemoryRetriever | None = None,
         memory_extractor: MemoryExtractor | None = None,
         memory_writer: MemoryWriter | None = None,
@@ -170,6 +177,7 @@ class ChatService:
         event_sink: EventSink | None = None,
         correction_policy: CorrectionPolicy | None = None,
         deterministic_temporal_routing: bool = False,
+        deterministic_web_search_routing: bool = False,
     ):
         # Optional DI, matching every other component's pattern in this
         # codebase (AgentOrchestrator, Router, LLMDecisionMaker, ...) —
@@ -182,7 +190,14 @@ class ChatService:
             api_key=settings.openai_api_key,
             base_url=settings.ollama_base_url,
         )
-        self.session_store = InMemorySessionMemoryStore()
+        # Step 36: optional DI, matching llm_client's own pattern above --
+        # defaults to a fresh InMemorySessionMemoryStore, byte-identical to
+        # every milestone before 36. app/main.py's composition root injects
+        # a SQLiteSessionMemoryStore instead when MEMORY_BACKEND=sqlite
+        # (see app/persistence/sqlite_memory.py); this class makes no
+        # backend decision of its own, exactly like tool_registry/
+        # tool_execution_gate below.
+        self.session_store = session_store if session_store is not None else InMemorySessionMemoryStore()
         # NOTE: there is deliberately no `_default_memory` instance
         # attribute here. Anonymous (`session_id=None`) requests get a
         # fresh, request-scoped ConversationMemory built inside
@@ -194,7 +209,12 @@ class ChatService:
         # partitioned internally by session_id, same as session_store
         # partitions ConversationMemory) but never shared across separate
         # ChatService instances.
-        self.episodic_memory = InMemoryEpisodicMemory()
+        # Step 37: optional DI, identical pattern to session_store above --
+        # defaults to a fresh InMemoryEpisodicMemory, byte-identical to
+        # every milestone before 37. app/main.py's composition root injects
+        # a SQLiteEpisodicMemory instead when MEMORY_BACKEND=sqlite (see
+        # app/persistence/sqlite_episodic_memory.py).
+        self.episodic_memory = episodic_memory if episodic_memory is not None else InMemoryEpisodicMemory()
         # Step 16E-C: semantic memory retrieval is INJECTED, never
         # constructed here, and defaults to None. A default retriever would
         # mean building an embedding provider + vector index that nothing
@@ -238,6 +258,10 @@ class ChatService:
         # the composition root's choice (app/main.py) to every
         # AgentOrchestrator it builds.
         self.deterministic_temporal_routing = deterministic_temporal_routing
+        # Step 26: the identical pass-through pattern for the web-search-
+        # command counterpart — see app/agent/decision_maker.py's
+        # `_deterministic_web_decision` for what this actually controls.
+        self.deterministic_web_search_routing = deterministic_web_search_routing
 
     def ask(self, user_message: str, session_id: str | None = None) -> str:
         if user_message is None or not user_message.strip():
@@ -288,6 +312,7 @@ class ChatService:
                 event_emitter=event_emitter,
                 correction_policy=self.correction_policy,
                 deterministic_temporal_routing=self.deterministic_temporal_routing,
+                deterministic_web_search_routing=self.deterministic_web_search_routing,
                 deadline=deadline,
             )
         else:
@@ -305,6 +330,7 @@ class ChatService:
                 event_emitter=event_emitter,
                 correction_policy=self.correction_policy,
                 deterministic_temporal_routing=self.deterministic_temporal_routing,
+                deterministic_web_search_routing=self.deterministic_web_search_routing,
                 deadline=deadline,
             )
         result = orchestrator.process(cleaned_message)
