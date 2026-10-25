@@ -33,8 +33,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
-from app.agent.loop import AgentDecision, DecisionMakerError
+from app.agent.loop import ActionType, AgentDecision, DecisionMakerError
 from app.agent.reliability import FailureCategory
 from app.agent.memory_formatting import format_memory_context
 from app.agent.router import Router, RoutingHint
@@ -68,8 +69,12 @@ _MAX_OBSERVATION_DATA_CHARS = 2000
 # routing, which stay untouched.
 #
 # `_format_web_search_data` below renders web_search's result list as
-# plain, labeled text ("Result N / Title / URL / Content") instead, with
-# these bounds, chosen deliberately rather than just raising the old limit:
+# plain, labeled text ("Result N / Title / URL / Published / Content")
+# instead, with these bounds, chosen deliberately rather than just raising
+# the old limit. `Published` (from `published_date`, when Tavily returned
+# one) was added after this milestone, following the exact same
+# omit-rather-than-blank convention already established for Title/URL —
+# see `_format_web_search_data`'s own per-field `if value:` checks.
 #
 # - `_MAX_WEB_RESULTS_FORMATTED = 5`: matches WebSearchTool's own
 #   `max_results=5` Tavily request (app/tools/web_search.py). A defensive
@@ -121,6 +126,32 @@ class DecisionParseError(DecisionMakerError):
     default instead comes from `correction_policy=None` on AgentLoop
     itself — see reliability.py's module docstring).
     """
+
+
+class DuplicateWebSearchError(DecisionMakerError):
+    """Raised when the model's parsed decision requests `web_search` with
+    input that normalizes identically to an already-SUCCESSFUL web_search
+    call earlier in this same execution (see
+    `LLMDecisionMaker._is_duplicate_successful_web_search`).
+
+    This is deliberately raised AFTER `_parse_decision` already produced a
+    structurally valid `AgentDecision` — it is not a parse failure, it is a
+    narrow, additional check that the proposed action is not pointless
+    given evidence this execution already has. It always carries
+    `category=FailureCategory.DUPLICATE_TOOL_CALL`, so AgentLoop's
+    existing, unmodified `except DecisionMakerError` handling (the same
+    site DecisionParseError already flows through) offers it to any
+    injected CorrectionPolicy exactly like DECISION_PARSE/UNKNOWN_TOOL —
+    with no policy injected, it fails the state exactly as those do too.
+
+    Scoped to `web_search` only, and only to a query that already
+    SUCCEEDED — a different query, or a retry of a query whose prior
+    attempt failed, is never affected (see the module-level comment above
+    `_WEB_SEARCH_TOOL_NAME`).
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, category=FailureCategory.DUPLICATE_TOOL_CALL)
 
 
 class LLMDecisionMaker:
@@ -183,7 +214,7 @@ class LLMDecisionMaker:
 
         if self.event_emitter is None:
             raw_response = self.llm.generate([{"role": "user", "content": prompt}], json_mode=True)
-            return self._parse_decision(raw_response)
+            return self._finalize_decision(state, raw_response)
 
         self.event_emitter.emit(EventType.LLM_CALL_STARTED, step=state.step, llm_purpose=LLMPurpose.DECIDE)
         start = monotonic_start()
@@ -212,7 +243,91 @@ class LLMDecisionMaker:
             success=True,
             output_chars=len(raw_response) if raw_response else 0,
         )
-        return self._parse_decision(raw_response)
+        return self._finalize_decision(state, raw_response)
+
+    def _finalize_decision(self, state: AgentState, raw_response: str) -> AgentDecision:
+        """Parse the model's raw output, then apply one additional, narrow
+        check before handing the decision back to AgentLoop: a TOOL
+        decision requesting `web_search` with input identical (after
+        normalization) to an already-SUCCESSFUL web_search call earlier
+        in this execution is rejected via `DuplicateWebSearchError`
+        instead of being returned.
+
+        This runs AFTER `_parse_decision` deliberately — it is not a
+        parsing concern, it is "the decision is well-formed but pointless
+        given evidence already in hand," exactly the kind of judgment the
+        existing prompt instruction ("Do not call the same tool again if
+        an existing observation already answers the need") already asks
+        the model to make on its own but cannot enforce. Both call sites
+        in `decide()` route through here, so this check applies uniformly
+        regardless of whether an EventEmitter is configured.
+
+        Deliberately NOT applied to the two deterministic routes above
+        (`_deterministic_temporal_decision` / `_deterministic_web_decision`):
+        each already has its own `any(call.tool_name == tool_name for call
+        in state.tool_calls)` guard that prevents it from proposing
+        `web_search` a second time at all in one execution, and since its
+        tool_input is derived solely from `state.user_input` (fixed for
+        the whole execution), a hypothetical second firing could only ever
+        reproduce the identical query anyway — this check would be
+        redundant there, not merely harmless.
+        """
+        decision = self._parse_decision(raw_response)
+        if decision.action_type is ActionType.TOOL and self._is_duplicate_successful_web_search(
+            state, decision.tool_name, decision.tool_input
+        ):
+            raise DuplicateWebSearchError(
+                f"Model requested {decision.tool_name!r} with a query identical to an "
+                "already-successful call earlier in this execution."
+            )
+        return decision
+
+    def _is_duplicate_successful_web_search(
+        self, state: AgentState, tool_name: str | None, tool_input: str | None
+    ) -> bool:
+        """True only when `tool_name` is `web_search`, `tool_input` is a
+        non-blank string, and an earlier `ToolCall` for `web_search` in
+        `state.tool_calls` — at a step that also has a SUCCESSFUL
+        `web_search` Observation at that same step — normalizes (stripped,
+        lowercased, internal whitespace collapsed to one space — the same
+        idiom Router.deterministic_web_search_route already uses) to the
+        identical text.
+
+        `Observation` carries no `tool_input` of its own (see
+        app/agent/state.py), so a prior call and its outcome are matched
+        by `step`: AgentLoop records a ToolCall and (if execution did not
+        raise before reaching it) its Observation at the SAME state.step,
+        and at most one tool action happens per iteration — so this
+        pairing is exact, never approximate. A ToolCall with no matching
+        Observation (e.g. a denied, unauthorized, or input-rejected
+        attempt that never produced one) is simply not in
+        `successful_steps` and is correctly never treated as a duplicate —
+        that attempt is still retryable exactly as it already is via the
+        existing PERMISSION_DENIED/CONFIRMATION_REQUIRED/INVALID_TOOL_INPUT
+        handling, untouched by this method.
+
+        A prior web_search call that FAILED (Observation.success is False)
+        is likewise never counted here — this method must never block a
+        legitimate retry of a search that did not succeed the first time.
+        """
+        if tool_name != _WEB_SEARCH_TOOL_NAME or not tool_input or not tool_input.strip():
+            return False
+
+        normalized = re.sub(r"\s+", " ", tool_input.strip().lower())
+
+        successful_steps = {
+            observation.step
+            for observation in state.observations
+            if observation.tool_name == _WEB_SEARCH_TOOL_NAME and observation.success
+        }
+        for call in state.tool_calls:
+            if call.tool_name != _WEB_SEARCH_TOOL_NAME or call.step not in successful_steps:
+                continue
+            if not call.tool_input:
+                continue
+            if re.sub(r"\s+", " ", call.tool_input.strip().lower()) == normalized:
+                return True
+        return False
 
     # -- Deterministic temporal routing --------------------------------------
 
@@ -659,6 +774,9 @@ text like "25 December 2026") — never a JSON object echoing the input schema.
                 url = item.get("url")
                 if url:
                     lines.append(f"URL: {url}")
+                published_date = item.get("published_date")
+                if published_date:
+                    lines.append(f"Published: {published_date}")
                 content = item.get("content")
                 content_text = str(content).strip() if content else ""
             else:

@@ -46,11 +46,15 @@ def _push(state: _FakeState, signature: str) -> None:
 # 1 — FailureCategory: the closed vocabulary
 # ===========================================================================
 
-def test_failure_category_has_exactly_the_seven_documented_members() -> None:
+def test_failure_category_has_exactly_the_eight_documented_members() -> None:
     """Milestone 18 added exactly two new members (PERMISSION_DENIED,
-    CONFIRMATION_REQUIRED) to this closed set — every pre-existing member
-    is preserved unchanged, matching Milestone 18's explicit constraint
-    not to replace this enum."""
+    CONFIRMATION_REQUIRED) to this closed set, preserving every
+    pre-existing member unchanged. A later, narrowly-scoped addition
+    (DUPLICATE_TOOL_CALL — the model repeating an already-successful
+    web_search query, detected by LLMDecisionMaker itself rather than by
+    one of AgentLoop's own tool-execution call sites; see
+    FailureCategory's own docstring) added one more, again without
+    touching any pre-existing member."""
     assert {member.value for member in FailureCategory} == {
         "decision_parse",
         "unknown_tool",
@@ -59,6 +63,7 @@ def test_failure_category_has_exactly_the_seven_documented_members() -> None:
         "plan_skipped",
         "permission_denied",
         "confirmation_required",
+        "duplicate_tool_call",
     }
 
 

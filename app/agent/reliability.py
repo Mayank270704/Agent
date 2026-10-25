@@ -106,6 +106,15 @@ class FailureCategory(Enum):
     taxonomy) — this enum does not invent new failure modes, it names ones
     that already exist and were previously all terminal.
 
+    DUPLICATE_TOOL_CALL (added after Step 17) is the one member that does
+    not originate from one of AgentLoop's own five call sites directly —
+    it is raised by LLMDecisionMaker itself (app/agent/decision_maker.py's
+    `DuplicateWebSearchError`, via `_finalize_decision`), as a categorized
+    `DecisionMakerError`, and reaches AgentLoop through the SAME generic
+    `except DecisionMakerError` site DECISION_PARSE and UNKNOWN_TOOL (LLM
+    path) already share — it does not add a new AgentLoop call site, only
+    a new category value that one already-existing site can receive.
+
     Deliberately NOT included as members, because they must never be
     eligible for correction at all (see the module docstring on
     termination and app/agent/loop.py's own docstring):
@@ -187,6 +196,26 @@ class FailureCategory(Enum):
     arriving is a NEW request with a NEW context, not a self-correction of
     this one (see app/agent/tool_execution.py's `ConfirmationRequiredError`
     docstring)."""
+
+    DUPLICATE_TOOL_CALL = "duplicate_tool_call"
+    """The model proposed `web_search` with input that normalizes
+    identically to an already-SUCCESSFUL `web_search` call earlier in
+    this same execution (see
+    LLMDecisionMaker._is_duplicate_successful_web_search). Unlike every
+    category above, this one is detected by the decision maker itself,
+    after a structurally valid AgentDecision was already parsed — not by
+    AgentLoop resolving, authorizing, or executing a tool. `tool_name` is
+    deliberately never attached to this category's Failure (AgentLoop
+    passes `Failure(category=exc.category)` only, see
+    `DecisionMakerError` handling in app/agent/loop.py), matching
+    UNKNOWN_TOOL's own discipline, even though here the name is always
+    the fixed, trusted literal "web_search" rather than untrusted model
+    text.
+
+    A prior web_search call that FAILED is never counted as a match for
+    this category — only a prior SUCCESS makes a repeat pointless; a
+    retry after failure must remain correctable exactly as
+    TOOL_EXECUTION_FAILED already allows."""
 
 
 @dataclass(frozen=True)
@@ -287,6 +316,11 @@ _SAFE_MESSAGES: dict[FailureCategory, str] = {
     FailureCategory.CONFIRMATION_REQUIRED: (
         "That tool requires confirmation this request does not have. Choose a "
         "different action, or return FINAL if none applies."
+    ),
+    FailureCategory.DUPLICATE_TOOL_CALL: (
+        "You already ran this exact search and already received results for it. Use "
+        "that existing evidence to answer, or search again only with a genuinely "
+        "different, more specific query."
     ),
 }
 

@@ -236,6 +236,75 @@ def test_decision_parse_failure_is_corrected() -> None:
     assert state.corrections[0].category is FailureCategory.DECISION_PARSE
 
 
+def test_duplicate_tool_call_failure_is_corrected_once_then_terminates_on_repeat() -> None:
+    """DUPLICATE_TOOL_CALL (the audit follow-up guard for a repeated,
+    already-successful web_search query -- see
+    app/agent/decision_maker.py's DuplicateWebSearchError) flows through
+    the IDENTICAL, unmodified AgentLoop machinery as DECISION_PARSE/
+    UNKNOWN_TOOL above: a `DecisionMakerError` with this category is
+    offered to the injected CorrectionPolicy at the same
+    `except DecisionMakerError` site, with no AgentLoop code change at
+    all. This test proves the FIRST occurrence does NOT prematurely end
+    the loop -- the state stays RUNNING and the model gets a corrected
+    retry -- and that a SECOND, consecutive, identical-category failure
+    still terminates via BudgetedCorrectionPolicy's existing, unmodified
+    "repeated" rule, exactly as two consecutive DECISION_PARSE failures
+    already would."""
+    registry = ToolRegistry()
+    decision_maker = MixedDecisionMaker(
+        [
+            DecisionMakerError("duplicate query", category=FailureCategory.DUPLICATE_TOOL_CALL),
+            DecisionMakerError("duplicate query again", category=FailureCategory.DUPLICATE_TOOL_CALL),
+        ]
+    )
+    loop = AgentLoop(
+        decision_maker=decision_maker,
+        tool_registry=registry,
+        max_iterations=5,
+        correction_policy=BudgetedCorrectionPolicy(),
+    )
+    state = AgentState(user_input="What's the latest AI news?")
+
+    loop.run(state)
+
+    assert decision_maker.calls == 2
+    assert len(state.corrections) == 1
+    assert state.corrections[0].category is FailureCategory.DUPLICATE_TOOL_CALL
+    # Terminal via the SAME repetition rule every other category already
+    # uses -- not a new termination path, and not max_iterations (5)
+    # exhaustion either.
+    assert state.status is AgentStatus.FAILED
+    assert state.step < 5
+
+
+def test_duplicate_tool_call_failure_allows_recovery_with_a_different_decision() -> None:
+    """The mirror of test_decision_parse_failure_is_corrected: a SINGLE
+    duplicate-detection, followed by a different, successful decision on
+    the corrected retry, must reach COMPLETED -- proving this category is
+    an ordinary, recoverable Tier-1 failure, not a disguised hard stop."""
+    registry = ToolRegistry()
+    decision_maker = MixedDecisionMaker(
+        [
+            DecisionMakerError("duplicate query", category=FailureCategory.DUPLICATE_TOOL_CALL),
+            AgentDecision.final("recovered answer"),
+        ]
+    )
+    loop = AgentLoop(
+        decision_maker=decision_maker,
+        tool_registry=registry,
+        max_iterations=5,
+        correction_policy=BudgetedCorrectionPolicy(),
+    )
+    state = AgentState(user_input="What's the latest AI news?")
+
+    loop.run(state)
+
+    assert state.status is AgentStatus.COMPLETED
+    assert state.final_answer == "recovered answer"
+    assert len(state.corrections) == 1
+    assert state.corrections[0].category is FailureCategory.DUPLICATE_TOOL_CALL
+
+
 def test_unknown_tool_via_decision_maker_error_is_corrected() -> None:
     """The common production path: LLMDecisionMaker validates the tool
     name itself and raises a categorized DecisionParseError BEFORE an

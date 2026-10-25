@@ -102,6 +102,39 @@ def test_missing_title_or_url_is_omitted_not_shown_as_blank() -> None:
 
 
 # ===========================================================================
+# 2b. Publication date survives formatting (when present), omitted (when
+# absent) -- the gap identified by the duplicate-search/incomplete-answer
+# audit: `published_date` was already captured by WebSearchTool but never
+# rendered into the model-facing text.
+# ===========================================================================
+
+def test_published_date_is_rendered_when_present() -> None:
+    dm = _decision_maker()
+    data = [
+        {
+            "title": "LeetCode #1: Two Sum",
+            "url": "https://example.com/two-sum",
+            "content": "evidence",
+            "published_date": "2026-01-15",
+        }
+    ]
+
+    rendered = dm._format_web_search_data(data)
+
+    assert "Published: 2026-01-15" in rendered
+
+
+def test_missing_published_date_is_omitted_not_shown_as_blank() -> None:
+    dm = _decision_maker()
+    data = [{"title": "T", "url": "https://example.com/1", "content": "evidence with no published date"}]
+
+    rendered = dm._format_web_search_data(data)
+
+    assert "Published:" not in rendered
+    assert "evidence with no published date" in rendered
+
+
+# ===========================================================================
 # 3. Ordering preserved.
 # ===========================================================================
 
@@ -268,6 +301,66 @@ def test_formatted_web_results_reach_the_full_prompt() -> None:
     assert "Title: LeetCode #1: Two Sum" in prompt
     assert "URL: https://example.com/two-sum" in prompt
     assert "Given nums and target, return indices that sum to target." in prompt
+
+
+def test_published_date_reaches_the_full_prompt_end_to_end() -> None:
+    """Same end-to-end path as test_formatted_web_results_reach_the_full_prompt,
+    but proving published_date specifically survives all the way from the
+    observation into the real built prompt -- not just the isolated
+    formatter call the earlier published_date tests in this file check."""
+    llm = FakeLLM([json.dumps({"action_type": "final", "final_answer": "ok"})])
+    decision_maker = LLMDecisionMaker(llm_client=llm, tool_registry=ToolRegistry())
+    state = AgentState(user_input="Search the web for LeetCode problem #1.")
+    state.record_tool_call("web_search", "leetcode problem #1")
+    state.add_observation(
+        "web_search",
+        success=True,
+        data=[
+            {
+                "title": "LeetCode #1: Two Sum",
+                "url": "https://example.com/two-sum",
+                "content": "Given nums and target, return indices that sum to target.",
+                "published_date": "2026-01-15",
+            }
+        ],
+    )
+
+    decision_maker.decide(state)
+
+    prompt = llm.calls[0]["messages"][0]["content"]
+    assert "Published: 2026-01-15" in prompt
+
+
+# ===========================================================================
+# Three complete results (title + url + published_date + content each) all
+# survive formatting within the per-result and total budgets -- the
+# formatter-layer half of "three usable results when available" (what the
+# final free-text answer does with them is a separate, model-generation
+# concern this formatter cannot and does not guarantee).
+# ===========================================================================
+
+def test_three_complete_results_all_survive_formatting_within_budget() -> None:
+    dm = _decision_maker()
+    data = [
+        {
+            "title": f"Result {i} Title",
+            "url": f"https://example.com/{i}",
+            "content": f"Content for result {i}, a realistic short snippet of evidence text.",
+            "published_date": f"2026-01-{10 + i}",
+        }
+        for i in range(1, 4)
+    ]
+
+    rendered = dm._format_web_search_data(data)
+
+    assert "more result(s) omitted for length" not in rendered
+    assert "...[content truncated]" not in rendered
+    for i in range(1, 4):
+        assert f"Result {i}" in rendered
+        assert f"Title: Result {i} Title" in rendered
+        assert f"URL: https://example.com/{i}" in rendered
+        assert f"Published: 2026-01-{10 + i}" in rendered
+        assert f"Content for result {i}, a realistic short snippet of evidence text." in rendered
 
 
 # ===========================================================================
